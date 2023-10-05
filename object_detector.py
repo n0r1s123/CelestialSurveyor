@@ -14,6 +14,8 @@ from tensorflow.keras.layers import Dense, LSTM, TimeDistributed, Flatten, Conv2
 from dataset_creator.dataset_creator import DatasetCreator
 from xisf import XISF
 
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+
 # Assuming you have a function to generate batches of data
 class Dataset:
     def __init__(self, folder, samples_folder):
@@ -163,11 +165,20 @@ class Dataset:
             if random.randint(0, 1):
                 imgs = self.draw_object_on_image_series_numpy(shrinked)
                 imgs = np.array([imgs[num] - imgs[0] for num in range(1, len(imgs))])
+                # imgs = np.array([item - 1.5 * np.median(item) for item in imgs])
+                imgs[imgs < 0] = 0
+                imgs = np.array([(data - np.min(data))/(np.max(data) - np.min(data)) for data in imgs])
+                imgs = imgs ** 2
+
                 imgs.shape = *imgs.shape, 1
                 result = imgs, 1
             else:
-                shrinked.shape = *shrinked.shape, 1
                 shrinked = np.array([shrinked[num] - shrinked[0] for num in range(1, len(shrinked))])
+                # shrinked = np.array([item - 1.5 * np.median(item) for item in shrinked])
+                shrinked[shrinked < 0] = 0
+                shrinked = np.array([(data - np.min(data)) / (np.max(data) - np.min(data)) for data in shrinked])
+                shrinked = shrinked ** 2
+                shrinked.shape = *shrinked.shape, 1
                 result = shrinked, 0
             yield result
 
@@ -217,7 +228,10 @@ def build_rnn_model(input_shape):
         tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2))),
 
         tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten()),
-        tf.keras.layers.SimpleRNN(128, activation='relu'),
+
+        tf.keras.layers.LSTM(128, return_sequences=True),
+        tf.keras.layers.LSTM(64, return_sequences=False),
+
         tf.keras.layers.Dense(1, activation='sigmoid')
     ])
     return model
@@ -239,7 +253,7 @@ if __name__ == '__main__':
     #     plt.imshow(med_denoised, cmap='gray')
     #     plt.show()
 
-
+    print(tf.__version__)
     input_shape = (None, 224, 224, 1)
     # Build the model
     model = build_rnn_model(input_shape)
@@ -253,17 +267,17 @@ if __name__ == '__main__':
 
     dataset = tf.data.Dataset.from_generator(
         generator=dataset_class.generate_series,
-        output_types=(tf.float32, tf.int32),  # Adjust types if necessary
+        output_types=(tf.float32, tf.float32),  # Adjust types if necessary
         output_shapes=(input_shape, ())
     )
     # Batch and prefetch the dataset
     batch_size = 1
-    dataset = dataset.batch(batch_size).prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    dataset = dataset.batch(batch_size).prefetch(buffer_size=1000)
     # Compile the model
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
     # Train the model
-    model.fit(dataset, epochs=5, steps_per_epoch=200)
+    model.fit(dataset, epochs=5, steps_per_epoch=1000)
 
 
 

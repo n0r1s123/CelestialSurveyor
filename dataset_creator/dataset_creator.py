@@ -439,8 +439,7 @@ if __name__ == '__main__':
     #     "C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\shrinked\\image_0001.xisf_224_1_19.xisf",
     #     "C:\\git\\object_recognition\\star_samples\\medium_star_1.xisf", (-5, 0), (200, 100)
     # )
-    # plt.imshow(img, cmap='gray')
-    # plt.show()
+
 
     # DatasetCreator.draw_object_on_image_series(
     #     "C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\shrinked",
