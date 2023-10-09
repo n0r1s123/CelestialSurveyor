@@ -21,6 +21,7 @@ class Dataset:
     def __init__(self, folder, samples_folder):
         self.raw_dataset, self.exposures, self.timestamps, self.img_shape = self.__load_raw_dataset(folder)
         self.object_samples = self.__load_samples(samples_folder)
+        self.example_generated = False
 
 
     def __load_raw_dataset(self, folder):
@@ -51,11 +52,11 @@ class Dataset:
         return samples
 
     def get_shrinked_img_series(self, size, y, x):
-        shrinked = np.array([cv2.resize(item[y:y+size, x:x+size], dsize=(224, 224), interpolation=cv2.INTER_CUBIC) for item in self.raw_dataset])
+        shrinked = np.array([cv2.resize(item[y:y+size, x:x+size], dsize=(56, 56), interpolation=cv2.INTER_CUBIC) for item in self.raw_dataset])
         return shrinked
 
     def get_random_shrink(self):
-        size = random.randint(224, min(self.img_shape[:2]))
+        size = random.randint(56, min(self.img_shape[:2]))
         y = random.randint(0, self.img_shape[0] - size)
         x = random.randint(0, self.img_shape[1] - size)
         return size, y, x
@@ -125,8 +126,8 @@ class Dataset:
         result = []
         star_img = random.choice(self.object_samples)
         start_image_idx = random.randint(0, len(imgs) - 1)
-        start_y = random.randint(0, 253)
-        start_x = random.randint(0, 253)
+        start_y = random.randint(0, 56 - 1)
+        start_x = random.randint(0, 56 - 1)
         movement_vector = np.array([random.randint(3, 10), random.randint(3, 10)])
         try:
             start_ts = self.timestamps[start_image_idx]
@@ -155,8 +156,6 @@ class Dataset:
             new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
             result.append(new_img)
         result = np.array(result)
-        # result.shape = *result.shape, 1
-        # print(f"RESULT SHAPE: {result.shape}")
         return result
 
     def generate_series(self):
@@ -165,21 +164,27 @@ class Dataset:
             if random.randint(0, 1):
                 imgs = self.draw_object_on_image_series_numpy(shrinked)
                 imgs = np.array([imgs[num] - imgs[0] for num in range(1, len(imgs))])
-                # imgs = np.array([item - 1.5 * np.median(item) for item in imgs])
                 imgs[imgs < 0] = 0
                 imgs = np.array([(data - np.min(data))/(np.max(data) - np.min(data)) for data in imgs])
                 imgs = imgs ** 2
 
                 imgs.shape = *imgs.shape, 1
-                result = imgs, 1
+                result = imgs, np.array([1])
+                if not self.example_generated:
+                    for num, item in enumerate(imgs):
+                        XISF.write(
+                            os.path.join('C:\\git\\object_recognition\\examples', f"{num:03}.xisf"), item,
+                            creator_app="My script v1.0",
+                            codec='lz4hc', shuffle=True
+                        )
+                    self.example_generated = True
             else:
                 shrinked = np.array([shrinked[num] - shrinked[0] for num in range(1, len(shrinked))])
-                # shrinked = np.array([item - 1.5 * np.median(item) for item in shrinked])
                 shrinked[shrinked < 0] = 0
                 shrinked = np.array([(data - np.min(data)) / (np.max(data) - np.min(data)) for data in shrinked])
                 shrinked = shrinked ** 2
                 shrinked.shape = *shrinked.shape, 1
-                result = shrinked, 0
+                result = shrinked, np.array([0])
             yield result
 
     def generate_batch(self, batch_size):
@@ -196,38 +201,21 @@ class Dataset:
             yield X_batch, y_batch
 
 
-
-
-
-# def data_batch_generator(batch_size):
-#     while True:
-#         # Generate a batch of data (X, timestamps, y)
-#         # For example, you might load a batch of images, timestamps, and labels
-#         # Make sure to handle data augmentation, preprocessing, etc. here
-#
-#         yield {'images': X_batch, 'timestamps': timestamps_batch}, y_batch
-#
-
 # Define your RNN model
 def build_rnn_model(input_shape):
-    # model = tf.keras.Sequential([
-    #     tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(32, (3, 3), activation='relu'), input_shape=input_shape),
-    #     tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2))),
-    #     tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten()),
-    #     tf.keras.layers.SimpleRNN(64, activation='relu'),
-    #     tf.keras.layers.Dense(1, activation='sigmoid')
-    # ])
     model = tf.keras.Sequential([
         tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(32, (3, 3), activation='relu'), input_shape=input_shape),
         tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2))),
+        #
+        # # tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(64, (3, 3), activation='relu')),
+        # # tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2))),
+        # #
+        # # tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(128, (3, 3), activation='relu')),
+        # # tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2))),
 
-        tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(64, (3, 3), activation='relu')),
-        tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2))),
-
-        tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(128, (3, 3), activation='relu')),
-        tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2))),
-
-        tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten()),
+        #
+        # tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128), input_shape=input_shape),
+        tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten(), input_shape=input_shape),
 
         tf.keras.layers.LSTM(128, return_sequences=True),
         tf.keras.layers.LSTM(64, return_sequences=False),
@@ -237,101 +225,82 @@ def build_rnn_model(input_shape):
     return model
 
 
+class DataGenerator(tf.keras.utils.Sequence):
+    'Generates data for Keras'
+
+    dataset = Dataset('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+                                        'C:\\git\\object_recognition\\star_samples')
+    def __init__(self, list_IDs=None, labels=None, batch_size=32, n_channels=1,
+                 n_classes=1, shuffle=False):
+        'Initialization'
+        # self.dataset = Dataset('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+        #                                 'C:\\git\\object_recognition\\star_samples')
+        self.dim = (len(self.dataset.raw_dataset), 56, 56, 1)
+        self.batch_size = batch_size
+        self.labels = labels
+        self.list_IDs = list_IDs
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.shuffle = shuffle
+        self.generator = self.dataset.generate_batch(self.batch_size)
+        self.on_epoch_end()
+
+    def __len__(self):
+        'Denotes the number of batches per epoch'
+        return len(self.list_IDs) // self.batch_size
+
+    def __getitem__(self, index):
+        'Generate one batch of data'
+        # Generate indexes of the batch
+        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+
+        # Find list of IDs
+        list_IDs_temp = [self.list_IDs[k] for k in indexes]
+
+        # Generate data
+        X, y = self.__data_generation(list_IDs_temp)
+
+        return X, y
+
+    def on_epoch_end(self):
+        'Updates indexes after each epoch'
+        self.indexes = np.arange(len(self.list_IDs))
+        if self.shuffle == True:
+            np.random.shuffle(self.indexes)
+
+    def __data_generation(self, list_IDs_temp):
+        'Generates data containing batch_size samples' # X : (n_samples, *dim, n_channels)
+        X, y = next(self.generator)
+        y.shape = (self.batch_size, 1)
+        return X, y
+
+
 if __name__ == '__main__':
-    # dataset_class = Dataset('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-    #                                     'C:\\git\\object_recognition\\star_samples')
-
-    # gen = dataset_class.generate_series()
-    # result = 1
-    # series = None
-    # while result:
-    #     series, result = next(gen)
-    # print(len(series))
-    # # out = cv2.VideoWriter('output.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 25, (224, 224), False)
-    # for item in series:
-    #     med_denoised = ndimage.gaussian_filter(item, 2)
-    #     plt.imshow(med_denoised, cmap='gray')
-    #     plt.show()
-
     print(tf.__version__)
-    input_shape = (None, 224, 224, 1)
+    input_shape = (None, 56, 56, 1)
     # Build the model
-    model = build_rnn_model(input_shape)
+
+    # # Compile the model
+    # model = build_rnn_model(input_shape)
+    # model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    # model.build()
+
+
+    # Load model
+    model = tf.keras.models.load_model(
+        'model3.h5'
+    )
+
     print(model.summary())
 
-    # Create a Dataset using from_generator
-    num_samples = 10
-    # input_shape = (None, 224, 224, 1)  # Variable time steps, 224x224 images, 1 channel (monochrome)
-    dataset_class = Dataset('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-                                        'C:\\git\\object_recognition\\star_samples')
+    training_generator = DataGenerator(range(10000), range(10000), batch_size=10)
+    val_generator = DataGenerator(range(1000), range(1000), batch_size=10)
+    try:
+        model.fit_generator(generator=training_generator,
+                            validation_data=val_generator,
+                            epochs=5,
+                            )
+    except KeyboardInterrupt:
+        model.save("model4.h5")
+    model.save("model4.h5")
 
-    dataset = tf.data.Dataset.from_generator(
-        generator=dataset_class.generate_series,
-        output_types=(tf.float32, tf.float32),  # Adjust types if necessary
-        output_shapes=(input_shape, ())
-    )
-    # Batch and prefetch the dataset
-    batch_size = 1
-    dataset = dataset.batch(batch_size).prefetch(buffer_size=1000)
-    # Compile the model
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-
-    # Train the model
-    model.fit(dataset, epochs=5, steps_per_epoch=1000)
-
-
-
-# ============================================================
-
-
-    # # Define the model
-    # model = Sequential([
-    #     Conv2D(filters=32, kernel_size=(3, 3), activation='relu', input_shape=(224, 224)),
-    #     MaxPooling2D(pool_size=(2, 2)),
-    #     Flatten(),
-    #     LSTM(64, return_sequences=True),
-    #     LSTM(32),
-    #     Dense(1, activation='sigmoid')
-    # ])
-    #
-    # # Compile the model
-    # model.compile(optimizer='adam', loss='mse', metrics=['accuracy'])
-    # print(model.summary())
-    #
-    # # Create a dataset using your custom generator
-    # batch_size = 32
-    # dataset = Dataset('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-    #                   'C:\\git\\object_recognition\\star_samples')
-    # train_dataset = tf.data.Dataset.from_generator(dataset.generate_batch, args=[batch_size],
-    #                                                output_types=(tf.float32, tf.float32))
-    # train_dataset = train_dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-    #
-    # # Train the model using the dataset
-    # epochs = 10
-    # steps_per_epoch = 10
-    # model.fit(train_dataset, epochs=epochs, steps_per_epoch=steps_per_epoch)
-    #
-    # # # Evaluate the model (similarly create a test_dataset if needed)
-    # # loss, accuracy = model.evaluate(test_dataset)
-    # #
-
-
-
-
-
-
-
-# if __name__ == '__main__':
-#     dataset = Dataset('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', 'C:\\git\\object_recognition\\star_samples')
-#     generator = dataset.generate_series()
-#     print(generator)
-#     # shrinked = dataset.get_shrinked_img_series(*dataset.get_random_shrink())
-#     start_time = time.time()
-#     result, idx, x, y = next(generator)
-#     print(f"It took {time.time() - start_time} seconds to generate")
-#     # print(len(shrinked))
-#     print(x, y)
-#     print(len(result))
-#     for num in range(max([idx - 10, 0]), idx + 10):
-#         plt.imshow(result[num], cmap='gray')
-#         plt.show()
