@@ -1,23 +1,80 @@
+import datetime
+import os
 import random
 
-import time
-
-import json
-import matplotlib.pyplot as plt
-import numpy as np
-from auto_stretch.stretch import Stretch
-import os
-import pathlib
-import datetime
 import cv2
-import keras
+import numpy as np
+import pathlib
+import tensorflow as tf
 
-
+from auto_stretch.stretch import Stretch
 from xisf import XISF
 
-class DatasetCreator:
+
+class Singleton(type):
+    def __init__(cls, *args, **kwargs):
+        super(Singleton, cls).__init__(*args, **kwargs)
+        cls.instance = None
+
+    def __call__(cls, *args, **kwargs):
+        if cls.instance is None:
+            cls.instance = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls.instance
+
+
+class SourceData:
+    __metaclass__ = Singleton
+    # def __new__(cls, *args, **kwargs):
+    #     # cls.folder = folder
+    #     # cls.samples_folder = samples_folder
+    #     if not hasattr(cls, 'instance'):
+    #         super(SourceData, cls).__new__(cls, *args, **kwargs)
+    #     return cls.instance
+
+    def __init__(self, folder, samples_folder):
+        self.raw_dataset, self.exposures, self.timestamps, self.img_shape = self.__load_raw_dataset(folder)
+        self.object_samples = self.__load_samples(samples_folder)
+
+    @classmethod
+    def __load_raw_dataset(cls, folder):
+        file_list = [os.path.join(folder, item) for item in os.listdir(folder)]
+        raw_dataset = np.array([np.array(XISF(item).read_image(0)[:, :, 0]) for item in file_list])
+        timestamps = []
+        exposures = []
+        for num, item in enumerate(file_list, start=1):
+            img_meta = XISF(item).get_images_metadata()[0]
+            exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
+            timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
+            timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
+            exposures.append(exposure)
+            timestamps.append(timestamp)
+
+        print("Raw image dataset loaded:")
+        print(f"LEN: {len(raw_dataset)}")
+        print(f"SHAPE: {raw_dataset.shape}")
+        print(f"Memory: {(raw_dataset.itemsize * raw_dataset.size) // (1024 * 1024)} Mb")
+        print(f"Timestamps: {len(timestamps)}")
+        img_shape = raw_dataset.shape[1:]
+
+        return raw_dataset, exposures, timestamps, img_shape
+
+    @classmethod
+    def __load_samples(cls, samples_folder):
+        file_list = [os.path.join(samples_folder, item) for item in os.listdir(samples_folder)]
+        samples = np.array([np.array(XISF(item).read_image(0)[:, :, 0]) for item in file_list])
+        return samples
+
+
+class Dataset:
     ZERO_TOLERANCE = 100
-    SUB_SIZE = 254
+
+    def __init__(self, source_data: SourceData):
+        self.raw_dataset = source_data.raw_dataset
+        self.exposures = source_data.exposures
+        self.timestamps = source_data.timestamps
+        self.img_shape = source_data.img_shape
+        self.object_samples = source_data.object_samples
+        self.example_generated = False
 
     @classmethod
     def stretch_image(cls, img_data):
@@ -125,9 +182,9 @@ class DatasetCreator:
         for fp, timestamp in timestamped_file_list:
             xisf = XISF(fp)
             img_data = xisf.read_image(0)
-            img_data = DatasetCreator.to_gray(img_data)
-            y_boarders, x_boarders = DatasetCreator.crop_raw(img_data, to_do=False)
-            y_boarders, x_boarders = DatasetCreator.crop_fine(
+            img_data = Dataset.to_gray(img_data)
+            y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
+            y_boarders, x_boarders = Dataset.crop_fine(
                 img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
             boarders = np.append(boarders, np.array([*y_boarders, *x_boarders]))
         y_boarders = int(np.max(boarders[::4])), int(np.min(boarders[1::4]))
@@ -138,9 +195,9 @@ class DatasetCreator:
             file_meta = xisf.get_file_metadata()
             img_meta = xisf.get_images_metadata()
             img_data = xisf.read_image(0)
-            img_data = DatasetCreator.to_gray(img_data)
-            img_data = DatasetCreator.crop_image(img_data, y_boarders, x_boarders)
-            img_data = DatasetCreator.stretch_image(img_data)
+            img_data = Dataset.to_gray(img_data)
+            img_data = Dataset.crop_image(img_data, y_boarders, x_boarders)
+            img_data = Dataset.stretch_image(img_data)
             img_data = np.array(img_data)
             img_data = np.float32(img_data)
             img_data.shape = *img_data.shape, 1
@@ -150,68 +207,15 @@ class DatasetCreator:
                 codec='lz4hc', shuffle=True
             )
 
-    @classmethod
-    def shrink_folder(cls, input_folder, output_folder):
-        if not os.path.exists(output_folder):
-            pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
-        file_list = [item for item in os.listdir(input_folder) if ".xisf" in item]
-        fp = os.path.join(input_folder, file_list[0])
-        xisf = XISF(fp)
-        img_data = xisf.read_image(0)
-        original_size = img_data.shape[:2]
-        size = min(original_size)
-        sizes = []
-        while size > cls.SUB_SIZE:
-            sizes.append(size)
-            size //= 2
-        sizes.append(cls.SUB_SIZE)
-        sizes = np.array(sizes)
-        size_offset_map = {}
-        for size in sizes:
-            y_offsets = np.arange(0, original_size[0], size//2)
-            y_offsets = y_offsets[y_offsets + size <= original_size[0]]
-            if y_offsets[-1] + size != original_size[0]:
-                y_offsets = np.append(y_offsets, original_size[0] - size)
-            x_offsets = np.arange(0, original_size[1], size//2)
-            x_offsets = x_offsets[x_offsets + size <= original_size[1]]
-            if x_offsets[-1] + size != original_size[1]:
-                x_offsets = np.append(x_offsets, original_size[1] - size)
-            size_offset_map.update({size: (y_offsets, x_offsets)})
+    def get_shrinked_img_series(self, size, y, x):
+        shrinked = np.array([cv2.resize(item[y:y+size, x:x+size], dsize=(56, 56), interpolation=cv2.INTER_CUBIC) for item in self.raw_dataset])
+        return shrinked
 
-        for size in sizes:
-            print(f"Processing size {size}")
-            for file_num, fp in enumerate(file_list, start=1):
-                print(f"Processing image {fp}")
-                xisf = XISF(os.path.join(input_folder, fp))
-                file_meta = xisf.get_file_metadata()
-                img_meta = xisf.get_images_metadata()
-                img_data = xisf.read_image(0)
-                timestamp = xisf.get_images_metadata()[0]["FITSKeywords"]["DATE-OBS"][0]['value']
-                timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
-                for y_num, y_offset in enumerate(size_offset_map[size][0]):
-                    for x_num, x_offset in enumerate(size_offset_map[size][1]):
-                        shrinked = DatasetCreator.crop_image(
-                            img_data, (y_offset, y_offset + size), (x_offset, x_offset + size))
-                        shrinked = cv2.resize(
-                            shrinked, dsize=(cls.SUB_SIZE, cls.SUB_SIZE), interpolation=cv2.INTER_CUBIC)
-                        y_ratio, x_ratio = cls.SUB_SIZE / shrinked.shape[0], cls.SUB_SIZE / shrinked.shape[1]
-                        shrinked.shape = *shrinked.shape, 1
-                        XISF.write(
-                            os.path.join(output_folder, f"{fp}_{size}_{y_num}_{x_num}.xisf"), shrinked,
-                            creator_app="My script v1.0", image_metadata=img_meta[0], xisf_metadata=file_meta,
-                            codec='lz4hc', shuffle=True
-                        )
-                        with open(os.path.join(output_folder, f"{fp}_{size}_{y_num}_{x_num}.json"), "w") as fileo:
-                            info = {
-                                "image_num": file_num,
-                                "timestamp": int(timestamp.timestamp()),
-                                "size": int(size),
-                                "x_offset": int(x_offset),
-                                "y_offset": int(y_offset),
-                                "x_ratio": x_ratio,
-                                "y_ratio": y_ratio,
-                            }
-                            json.dump(info, fileo, indent=4)
+    def get_random_shrink(self):
+        size = random.randint(56, min(self.img_shape[:2]))
+        y = random.randint(0, self.img_shape[0] - size)
+        x = random.randint(0, self.img_shape[1] - size)
+        return size, y, x
 
     @classmethod
     def insert_star_by_coords(cls, image, star, coords):
@@ -222,26 +226,12 @@ class DatasetCreator:
         :param coords: tuple with (y, x) coordinates where the star will be drawn on the image.
         :return: 2 axis np.array.
         """
-        if isinstance(star, str):
-            star = XISF(star)
-            star = star.read_image(0)[:, :, 0]
-        elif isinstance(star, np.ndarray):
-            assert len(star.shape) == 2
-        else:
-            raise ValueError(f"star parameter is expected to be a file path or 2 axis np.ndarray. got {star}")
+        star_y_size, star_x_size = star.shape[:2]
 
-        star_y_size, star_x_size = star.shape
-
-        if isinstance(image, str):
-            image = XISF(image)
-            print(image.get_images_metadata())
-            image = np.array(image.read_image(0)[:, :, 0])
-        elif isinstance(image, np.ndarray):
-            assert len(image.shape) == 2
-        else:
-            raise ValueError(f"image parameter is expected to be a file path or 2 axis np.ndarray. got {image}")
         image_y_size, image_x_size = image.shape
         x, y = coords
+        x = round(x)
+        y = round(y)
         if x + star_x_size // 2 < 0 or x - star_x_size // 2 > image_x_size:
             return image
         if y + star_y_size // 2 < 0 or y - star_y_size // 2 > image_y_size:
@@ -256,15 +246,16 @@ class DatasetCreator:
         cut_right = image_x_size - x - star_x_size // 2
         cut_right = -cut_right if cut_right < 0 else 0
 
-        y_slice = slice(y+cut_top-star_y_size//2, y-cut_bottom+star_y_size//2)
-        x_slice = slice(x+cut_left-star_x_size//2, x-cut_right+star_x_size//2)
+        y_slice = slice(y + cut_top - star_y_size // 2, y - cut_bottom + star_y_size // 2)
+        x_slice = slice(x + cut_left - star_x_size // 2, x - cut_right + star_x_size // 2)
+
 
         image_to_correct = image[y_slice, x_slice]
+
         image[y_slice, x_slice] = np.maximum(
-            star[cut_top:star_y_size - cut_bottom, cut_left:star_x_size - cut_right], image_to_correct)
+            star[int(cut_top):int(star_y_size - cut_bottom), int(cut_left):int(star_x_size - cut_right)], image_to_correct)
         return image
 
-    @classmethod
     def calculate_star_form_on_single_image(cls, image, star, start_coords, movement_vector, exposure_time=None):
         """
         Draws star on the image keeping in mind that it may move due to exposure time.
@@ -276,24 +267,6 @@ class DatasetCreator:
                               file it will be taken from image metadata.
         :return: 2 axis np.array.
         """
-        if isinstance(star, str):
-            star = XISF(star)
-            star = star.read_image(0)[:, :, 0]
-        elif isinstance(star, np.ndarray):
-            assert len(star.shape) == 2
-        else:
-            raise ValueError(f"star parameter is expected to be a file path or 2 axis np.ndarray. got {star}")
-
-        if isinstance(image, str):
-            image = XISF(image)
-            exposure_time = float(image.get_images_metadata()[0]["FITSKeywords"]["EXPTIME"][0]['value'])
-            image = np.array(image.read_image(0)[:, :, 0])
-        elif isinstance(image, np.ndarray):
-            assert len(image.shape) == 2
-            assert exposure_time
-        else:
-            raise ValueError(f"image parameter is expected to be a file path or 2 axis np.ndarray. got {image}")
-
         per_image_movement_vector = np.array(movement_vector) * exposure_time / 3600
         y_move, x_move = per_image_movement_vector
         start_y, start_x = start_coords
@@ -305,146 +278,125 @@ class DatasetCreator:
             image = cls.insert_star_by_coords(image, star, (start_y + dy, start_x + dx))
         return image
 
-    @classmethod
-    def draw_object_on_image_series_numpy(cls, imgs, star_img):
-        start_image_idx = random.randint(0, len(imgs))
-        start_y = random.randint(0, cls.SUB_SIZE)
-        start_x = random.randint(0, cls.SUB_SIZE)
-        movement_vector = (random.randint(0, 10), random.randint(0, 10))
-        y, x = start_y, start_x
-        for img in imgs[start_image_idx:]:
-            cls.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, )
+    def draw_object_on_image_series_numpy(self, imgs):
+        result = []
+        star_img = random.choice(self.object_samples)
+        start_image_idx = random.randint(0, len(imgs) - 1)
+        start_y = random.randint(0, 56 - 1)
+        start_x = random.randint(0, 56 - 1)
+        movement_vector = np.array([random.randint(3, 10), random.randint(3, 10)])
+        start_ts = self.timestamps[start_image_idx]
 
-
-
-
-
-
-    @classmethod
-    def draw_object_on_image_series(cls, input_folder, star, size,
-                                    y_block, x_block, start_coords, movement_vector, output_folder=None):
-        if isinstance(star, str):
-            star = XISF(star)
-            star = star.read_image(0)[:, :, 0]
-        elif isinstance(star, np.ndarray):
-            assert len(star.shape) == 2
-        else:
-            raise ValueError(f"star parameter is expected to be a file path or 2 axis np.ndarray. got {star}")
-        file_list = [os.path.join(input_folder, item) for item in os.listdir(input_folder) if f"{size}_{y_block}_{x_block}.xisf" in item]
-        start_ts = XISF(file_list[0]).get_images_metadata()[0]["FITSKeywords"]["DATE-OBS"][0]['value']
-        start_ts = datetime.datetime.strptime(start_ts.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
-        # previous_ts = start_ts
-        initial_image = file_list[0]
-        initial_image = XISF(initial_image)
-        initial_image = np.array(initial_image.read_image(0)[:, :, 0])
-        print(initial_image.shape)
-        for item in file_list:
-            image = XISF(item)
-            file_meta = image.get_file_metadata()
-            img_meta = image.get_images_metadata()
-            timestamp = img_meta[0]["FITSKeywords"]["DATE-OBS"][0]['value']
-            timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
-            exposure_time = float(img_meta[0]["FITSKeywords"]["EXPTIME"][0]['value'])
-            image = np.array(image.read_image(0)[:, :, 0])
+        movement_vector = - movement_vector
+        to_beginning_slice = slice(None, start_image_idx)
+        for img, exposure, timestamp in zip(
+                imgs[to_beginning_slice][::-1], self.exposures[to_beginning_slice], self.timestamps[to_beginning_slice]
+        ):
             inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
-            y, x = inter_image_movement_vector + np.array(start_coords)
-            image = DatasetCreator.calculate_star_form_on_single_image(
-                image, star, (round(y), round(x)), movement_vector, exposure_time=exposure_time
-            )
-            output_folder = output_folder if output_folder else input_folder
-            if not os.path.exists(output_folder):
-                pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
-            # image = image - initial_image
-            image.shape = *image.shape, 1
-            XISF.write(
-                os.path.join(output_folder, f"{os.path.basename(item)}"), image,
-                creator_app="My script v1.0", image_metadata=img_meta[0], xisf_metadata=file_meta,
-                codec='lz4hc', shuffle=True
-            )
+            y, x = inter_image_movement_vector + np.array([start_y, start_x])
+            new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
+            result.append(new_img)
 
-class DataGenerator(keras.utils.Sequence):
+        result = result[::-1]
+
+        movement_vector = - movement_vector
+
+        to_end_slice = slice(start_image_idx, None, None)
+        for img, exposure, timestamp in zip(
+                imgs[to_end_slice], self.exposures[to_end_slice], self.timestamps[to_end_slice]
+        ):
+            inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
+            y, x = inter_image_movement_vector + np.array([start_y, start_x])
+            new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
+            result.append(new_img)
+        result = np.array(result)
+        return result
+
+    def generate_series(self):
+        while True:
+            shrinked = self.get_shrinked_img_series(*self.get_random_shrink())
+            if random.randint(0, 1):
+                imgs = self.draw_object_on_image_series_numpy(shrinked)
+                imgs = np.array([imgs[num] - imgs[0] for num in range(1, len(imgs))])
+                imgs[imgs < 0] = 0
+                imgs = np.array([(data - np.min(data))/(np.max(data) - np.min(data)) for data in imgs])
+                imgs = imgs ** 2
+
+                imgs.shape = *imgs.shape, 1
+                result = imgs, np.array([1])
+                if not self.example_generated:
+                    for num, item in enumerate(imgs):
+                        XISF.write(
+                            os.path.join('C:\\git\\object_recognition\\examples', f"{num:03}.xisf"), item,
+                            creator_app="My script v1.0",
+                            codec='lz4hc', shuffle=True
+                        )
+                    self.example_generated = True
+            else:
+                shrinked = np.array([shrinked[num] - shrinked[0] for num in range(1, len(shrinked))])
+                shrinked[shrinked < 0] = 0
+                shrinked = np.array([(data - np.min(data)) / (np.max(data) - np.min(data)) for data in shrinked])
+                shrinked = shrinked ** 2
+                shrinked.shape = *shrinked.shape, 1
+                result = shrinked, np.array([0])
+            yield result
+
+    def generate_batch(self, batch_size):
+        series_generator = self.generate_series()
+        while True:
+            timestamps_batch = []
+            batch = [next(series_generator) for _ in range(batch_size)]
+            X_batch = np.array([item[0] for item in batch])
+            y_batch = np.array([item[1] for item in batch])
+            normalizer = (max(self.timestamps) - min(self.timestamps)).total_seconds()
+            timestamps = [(max(self.timestamps) - ts).total_seconds() / normalizer for ts in self.timestamps]
+            for _ in range(batch_size):
+                timestamps_batch.append(timestamps)
+            yield X_batch, y_batch
+
+
+class DataGenerator(tf.keras.utils.Sequence):
     'Generates data for Keras'
-    def __init__(self, list_IDs, labels, batch_size=32, dim=(32, 32, 32), n_channels=1,
-                 n_classes=2, shuffle=True):
+
+    def __init__(self, dataset, list_IDs=None, labels=None, batch_size=32, n_channels=1,
+                 n_classes=1, shuffle=False):
         'Initialization'
-        self.dim = dim
+        self.dataset = dataset
+        self.dim = (len(self.dataset.raw_dataset), 56, 56, 1)
         self.batch_size = batch_size
         self.labels = labels
         self.list_IDs = list_IDs
         self.n_channels = n_channels
         self.n_classes = n_classes
         self.shuffle = shuffle
+        self.generator = self.dataset.generate_batch(self.batch_size)
         self.on_epoch_end()
-        self.raw_dataset = np.array([])
 
-    def load_raw_dataset(self, folder):
-        file_list = [os.path.join(folder, item) for item in os.listdir(folder)]
-        self.raw_dataset = np.array([XISF(item).read_image(0) for item in file_list])
-        print(len(self.raw_dataset))
-        print(self.raw_dataset.shape)
-        print(self.raw_dataset.itemsize * self.raw_dataset.size)
+    def __len__(self):
+        'Denotes the number of batches per epoch'
+        return len(self.list_IDs) // self.batch_size
 
+    def __getitem__(self, index):
+        'Generate one batch of data'
+        # Generate indexes of the batch
+        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
 
+        # Find list of IDs
+        list_IDs_temp = [self.list_IDs[k] for k in indexes]
 
-    # def __len__(self):
-    #     'Denotes the number of batches per epoch'
-    #     return int(np.floor(len(self.list_IDs) / self.batch_size))
-    #
-    # def __getitem__(self, index):
-    #     'Generate one batch of data'
-    #     # Generate indexes of the batch
-    #     indexes = self.indexes[index * self.batch_size:(index + 1) * self.batch_size]
-    #
-    #     # Find list of IDs
-    #     list_IDs_temp = [self.list_IDs[k] for k in indexes]
-    #
-    #     # Generate data
-    #     X, y = self.__data_generation(list_IDs_temp)
-    #
-    #     return X, y
+        # Generate data
+        X, y = self.__data_generation(list_IDs_temp)
 
-    # def on_epoch_end(self):
-    #     'Updates indexes after each epoch'
-    #     self.indexes = np.arange(len(self.list_IDs))
-    #     if self.shuffle == True:
-    #         np.random.shuffle(self.indexes)
+        return X, y
 
-    # def __data_generation(self, list_IDs_temp):
-    #     'Generates data containing batch_size samples'  # X : (n_samples, *dim, n_channels)
-    #     # Initialization
-    #     X = np.empty((self.batch_size, *self.dim, self.n_channels))
-    #     y = np.empty((self.batch_size), dtype=int)
-    #
-    #     # Generate data
-    #     for i, ID in enumerate(list_IDs_temp):
-    #         # Store sample
-    #         X[i,] = np.load('data/' + ID + '.npy')
-    #
-    #         # Store class
-    #         y[i] = self.labels[ID]
-    #
-    #     return X, keras.utils.to_categorical(y, num_classes=self.n_classes)
+    def on_epoch_end(self):
+        'Updates indexes after each epoch'
+        self.indexes = np.arange(len(self.list_IDs))
+        if self.shuffle == True:
+            np.random.shuffle(self.indexes)
 
-
-
-if __name__ == '__main__':
-    # DatasetCreator.crop_folder("C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\registered\\Light_BIN-1_4944x3284_EXPOSURE-300.00s_FILTER-NoFilter_RGB", "C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped")
-    # DatasetCreator.shrink_folder("C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped", "C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\shrinked")
-
-    # DatasetCreator.insert_star_by_coords(
-    #     "C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\shrinked\\image_0001.xisf_224_1_19.xisf",
-    #     "C:\\git\\object_recognition\\star_samples\\medium_star_1.xisf", (100, 100))
-
-    # img = DatasetCreator.calculate_star_form_on_single_image(
-    #     "C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\shrinked\\image_0001.xisf_224_1_19.xisf",
-    #     "C:\\git\\object_recognition\\star_samples\\medium_star_1.xisf", (-5, 0), (200, 100)
-    # )
-
-
-    # DatasetCreator.draw_object_on_image_series(
-    #     "C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\shrinked",
-    #     "C:\\git\\object_recognition\\star_samples\\medium_star_1.xisf",
-    #     224, 5, 5, (0, 0), (1, 1),
-    #     "C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\experiment",
-    # )
-    DataGenerator(None, None).load_raw_dataset('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped')
+    def __data_generation(self, _):
+        'Generates data containing batch_size samples'
+        X, y = next(self.generator)
+        y.shape = (self.batch_size, 1)
+        return X, y
