@@ -15,30 +15,16 @@ from xisf import XISF
 from PIL import Image
 
 
-class Singleton(type):
-    def __init__(cls, *args, **kwargs):
-        super(Singleton, cls).__init__(*args, **kwargs)
-        cls.instance = None
-
-    def __call__(cls, *args, **kwargs):
-        if cls.instance is None:
-            cls.instance = super(Singleton, cls).__call__(*args, **kwargs)
-        return cls.instance
-
-
 class SourceData:
-    __metaclass__ = Singleton
-
     def __init__(self, folder=None, samples_folder=None):
         self.raw_dataset, self.exposures, self.timestamps, self.img_shape = self.__load_raw_dataset(folder)
+        self.normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
+        self.normalized_timestamps = np.array(
+            [item / max(self.normalized_timestamps) for item in self.normalized_timestamps])
         self.object_samples = self.__load_samples(samples_folder)
         self.max_value = np.max(self.raw_dataset)
         self.min_value = np.min(self.raw_dataset)
-        print(np.median(self.raw_dataset))
-        print(np.average(self.raw_dataset))
         self.average_value = np.average(self.raw_dataset)
-        # print(f"Dataset MAX: {self.max_value}; Dataset  MIN: {self.min_value}")
-        # raise Exception
 
     @classmethod
     def __load_raw_dataset(cls, folder):
@@ -80,14 +66,15 @@ class Dataset:
     ZERO_TOLERANCE = 100
 
     def __init__(self, source_data: SourceData):
-        self.raw_dataset = source_data.raw_dataset
-        self.exposures = source_data.exposures
-        self.timestamps = source_data.timestamps
-        self.img_shape = source_data.img_shape
-        self.object_samples = source_data.object_samples
-        self.average_value = source_data.average_value
-        self.max_value = source_data.max_value
-        self.example_generated = False
+        self.source_data = source_data
+        # self.raw_dataset = source_data.raw_dataset
+        # self.exposures = source_data.exposures
+        # self.timestamps = source_data.timestamps
+        # self.img_shape = source_data.img_shape
+        # self.object_samples = source_data.object_samples
+        # self.average_value = source_data.average_value
+        # self.max_value = source_data.max_value
+        # self.example_generated = False
 
     @classmethod
     def stretch_image(cls, img_data):
@@ -221,15 +208,16 @@ class Dataset:
             )
 
     def get_shrinked_img_series(self, size, y, x, dataset=None):
-        dataset = self.raw_dataset if dataset is None else dataset
-        shrinked = np.array([cv2.resize(item[y:y+size, x:x+size], dsize=(54, 54), interpolation=cv2.INTER_CUBIC) for item in dataset])
+        # dataset = self.source_data.raw_dataset if dataset is None else dataset
+        shrinked = np.copy(self.source_data.raw_dataset[:, y:y+size, x:x+size])
+        # shrinked = np.array([cv2.resize(item[y:y+size, x:x+size], dsize=(54, 54), interpolation=cv2.INTER_CUBIC) for item in dataset])
         return shrinked
 
     def get_random_shrink(self):
         size = 54
         # size = random.randint(54, min(self.img_shape[:2]))
-        y = random.randint(0, self.img_shape[0] - size)
-        x = random.randint(0, self.img_shape[1] - size)
+        y = random.randint(0, self.source_data.img_shape[0] - size)
+        x = random.randint(0, self.source_data.img_shape[1] - size)
         return size, y, x
 
     @classmethod
@@ -296,11 +284,11 @@ class Dataset:
         return image
 
     def draw_object_on_image_series_numpy(self, imgs):
+        # print(imgs.shape)
+        average = np.average(imgs)
         result = []
         y_shape, x_shape = imgs[0].shape[:2]
-        star_img = random.choice(self.object_samples)
-        # plt.imshow(star_img, cmap='gray')
-        # plt.show()
+        star_img = random.choice(self.source_data.object_samples)
         start_image_idx = random.randint(0, len(imgs) - 1)
         # start_image_idx = random.randint(0, 1)
         start_y = random.randint(0, y_shape - 1)
@@ -308,7 +296,7 @@ class Dataset:
         # object_factor = random.choice((0.2,))
         object_factor = random.choice((0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
         star_max = np.max(star_img)
-        expected_max = self.average_value + (self.max_value - self.average_value) * object_factor
+        expected_max = self.source_data.average_value + (self.source_data.max_value - self.source_data.average_value) * object_factor
         multiplier = expected_max / star_max
         star_img = star_img * multiplier
 
@@ -320,12 +308,12 @@ class Dataset:
         divider = 10
         choices = list(range(min_vector, 0)) + list(range(1, max_vector))
         movement_vector = np.array([random.choice(choices)/divider, random.choice(choices)/divider])
-        start_ts = self.timestamps[start_image_idx]
+        start_ts = self.source_data.timestamps[start_image_idx]
 
         movement_vector = - movement_vector
         to_beginning_slice = slice(None, start_image_idx)
         for img, exposure, timestamp in zip(
-                imgs[to_beginning_slice][::-1], self.exposures[to_beginning_slice], self.timestamps[to_beginning_slice]
+                imgs[to_beginning_slice][::-1], self.source_data.exposures[to_beginning_slice], self.source_data.timestamps[to_beginning_slice]
         ):
             inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
             y, x = inter_image_movement_vector + np.array([start_y, start_x])
@@ -338,14 +326,20 @@ class Dataset:
 
         to_end_slice = slice(start_image_idx, None, None)
         for img, exposure, timestamp in zip(
-                imgs[to_end_slice], self.exposures[to_end_slice], self.timestamps[to_end_slice]
+                imgs[to_end_slice], self.source_data.exposures[to_end_slice], self.source_data.timestamps[to_end_slice]
         ):
             inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
             y, x = inter_image_movement_vector + np.array([start_y, start_x])
             new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
             result.append(new_img)
         result = np.array(result)
-        return result
+        new_average = np.average(result)
+
+        if new_average - average == 0:
+            drawn = 0
+        else:
+            drawn = 1
+        return result, drawn
 
     @classmethod
     def prepare_images(cls, imgs):
@@ -355,41 +349,63 @@ class Dataset:
         # imgs = np.array([(data - np.min(data))/(np.max(data) - np.min(data)) for data in imgs])
         imgs = imgs ** 2
 
-        imgs.shape = *imgs.shape, 1
+        # imgs.shape = *imgs.shape, 1
         return imgs
 
-    def generate_series(self):
-        while True:
-            shrinked = self.get_shrinked_img_series(*self.get_random_shrink())
-            if random.randint(0, 100) > 90:
-                imgs = self.draw_object_on_image_series_numpy(shrinked)
-                imgs = self.prepare_images(imgs)
-                result = imgs, np.array([1])
-                if not self.example_generated:
-                    for num, item in enumerate(imgs):
-                        XISF.write(
-                            os.path.join('C:\\git\\object_recognition\\examples', f"{num:03}.xisf"), item,
-                            creator_app="My script v1.0",
-                            codec='lz4hc', shuffle=True
-                        )
-                    self.example_generated = True
-            else:
-                shrinked = self.prepare_images(shrinked)
-                result = shrinked, np.array([0])
-            yield result
+    def make_series(self):
+        shrinked = self.get_shrinked_img_series(*self.get_random_shrink())
+        if random.randint(0, 100) > 90:
+            imgs, drawn = self.draw_object_on_image_series_numpy(shrinked)
+            imgs = self.prepare_images(imgs)
+            result = imgs, np.array([drawn])
+        else:
+            shrinked = self.prepare_images(shrinked)
+            result = shrinked, np.array([0])
+        return result
 
-    def generate_batch(self, batch_size):
-        series_generator = self.generate_series()
+    def make_batch(self, batch_size):
+        batch = [self.make_series() for _ in range(batch_size)]
+        X_batch = np.array([item[0] for item in batch])
+        TS_batch = np.array([self.source_data.normalized_timestamps[1: -1] for _ in batch])
+        y_batch = np.array([item[1] for item in batch])
+        return [X_batch, TS_batch], y_batch
+
+    def batch_generator(self, batch_size):
         while True:
-            timestamps_batch = []
-            batch = [next(series_generator) for _ in range(batch_size)]
-            X_batch = np.array([item[0] for item in batch])
-            y_batch = np.array([item[1] for item in batch])
-            normalizer = (max(self.timestamps) - min(self.timestamps)).total_seconds()
-            timestamps = [(max(self.timestamps) - ts).total_seconds() / normalizer for ts in self.timestamps]
-            for _ in range(batch_size):
-                timestamps_batch.append(timestamps)
-            yield X_batch, y_batch
+            yield self.make_batch(batch_size)
+
+    # def generate_series(self):
+    #     while True:
+    #         shrinked = self.get_shrinked_img_series(*self.get_random_shrink())
+    #         if random.randint(0, 100) > 90:
+    #             imgs = self.draw_object_on_image_series_numpy(shrinked)
+    #             imgs = self.prepare_images(imgs)
+    #             result = imgs, np.array([1])
+    #             if not self.example_generated:
+    #                 for num, item in enumerate(imgs):
+    #                     XISF.write(
+    #                         os.path.join('C:\\git\\object_recognition\\examples', f"{num:03}.xisf"), item,
+    #                         creator_app="My script v1.0",
+    #                         codec='lz4hc', shuffle=True
+    #                     )
+    #                 self.example_generated = True
+    #         else:
+    #             shrinked = self.prepare_images(shrinked)
+    #             result = shrinked, np.array([0])
+    #         yield result
+    #
+    # def generate_batch(self, batch_size):
+    #     series_generator = self.generate_series()
+    #     while True:
+    #         timestamps_batch = []
+    #         batch = [next(series_generator) for _ in range(batch_size)]
+    #         X_batch = np.array([item[0] for item in batch])
+    #         y_batch = np.array([item[1] for item in batch])
+    #         normalizer = (max(self.source_data.timestamps) - min(self.source_data.timestamps)).total_seconds()
+    #         timestamps = [(max(self.source_data.timestamps) - ts).total_seconds() / normalizer for ts in self.source_data.timestamps]
+    #         for _ in range(batch_size):
+    #             timestamps_batch.append(timestamps)
+    #         yield X_batch, y_batch
 
     @classmethod
     def get_max_image(cls, images):
