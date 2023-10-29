@@ -41,7 +41,7 @@ if __name__ == '__main__':
     imgplot = ax.imshow(max_image, cmap='gray')
 
     model = tf.keras.models.load_model(
-        'model11.h5'
+        'model12.h5'
     )
     total_len = len(ys) * len(xs)
     progress_bar = tqdm.tqdm(total=total_len)

@@ -345,16 +345,16 @@ class Dataset:
     def prepare_images(cls, imgs):
         imgs = np.array(
             [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(1, len(imgs) - 1)])
-        imgs[imgs < 0] = 0
-        # imgs = np.array([(data - np.min(data))/(np.max(data) - np.min(data)) for data in imgs])
-        imgs = imgs ** 2
 
-        # imgs.shape = *imgs.shape, 1
+        imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
+        imgs = imgs - np.average(imgs)
+        imgs[imgs < 0] = 0
+        imgs = imgs ** 2
         return imgs
 
     def make_series(self):
         shrinked = self.get_shrinked_img_series(*self.get_random_shrink())
-        if random.randint(0, 100) > 90:
+        if random.randint(0, 100) > 50:
             imgs, drawn = self.draw_object_on_image_series_numpy(shrinked)
             imgs = self.prepare_images(imgs)
             result = imgs, np.array([drawn])

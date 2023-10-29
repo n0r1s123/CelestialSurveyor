@@ -22,7 +22,7 @@ def build_rnn_model(input_shape):
     ])
 
     rnn_model = tf.keras.models.Sequential([
-        tf.keras.layers.LSTM(512, return_sequences=True),  # LSTM layer with 64 units
+        tf.keras.layers.LSTM(256, return_sequences=True),  # LSTM layer with 64 units
         tf.keras.layers.LSTM(128, return_sequences=False),  # LSTM layer with 32 units
     ])
 
@@ -56,18 +56,16 @@ if __name__ == '__main__':
     # Compile the model
     # model = build_rnn_model(input_shape)
     # model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    # model.build()
-
 
     # Load model
     model = tf.keras.models.load_model(
-        'model11.h5'
+        'model12.h5'
     )
 
     print(model.summary())
     source_data = SourceData(
-        'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped',
-        # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+        # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped',
+        'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
         samples_folder='C:\\git\\object_recognition\\star_samples')
 
     dataset = Dataset(source_data)
@@ -82,10 +80,9 @@ if __name__ == '__main__':
             validation_data=val_generator,
             steps_per_epoch=10000,
             validation_steps=1000,
-            max_queue_size=30,
-            epochs=5,
+            epochs=10,
         )
     except KeyboardInterrupt:
-        model.save("model11.h5")
-    model.save("model11.h5")
+        model.save("model12.h5")
+    model.save("model12.h5")
 
