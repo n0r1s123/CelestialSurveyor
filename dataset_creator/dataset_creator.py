@@ -18,9 +18,9 @@ from PIL import Image
 class SourceData:
     def __init__(self, folder=None, samples_folder=None):
         self.raw_dataset, self.exposures, self.timestamps, self.img_shape = self.__load_raw_dataset(folder)
-        self.normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
+        normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
         self.normalized_timestamps = np.array(
-            [item / max(self.normalized_timestamps) for item in self.normalized_timestamps])
+            [item / max(normalized_timestamps) for item in normalized_timestamps])
         self.object_samples = self.__load_samples(samples_folder)
         self.max_value = np.max(self.raw_dataset)
         self.min_value = np.min(self.raw_dataset)
@@ -208,8 +208,8 @@ class Dataset:
             )
 
     def get_shrinked_img_series(self, size, y, x, dataset=None):
-        # dataset = self.source_data.raw_dataset if dataset is None else dataset
-        shrinked = np.copy(self.source_data.raw_dataset[:, y:y+size, x:x+size])
+        dataset = self.source_data.raw_dataset if dataset is None else dataset
+        shrinked = np.copy(dataset[:, y:y+size, x:x+size])
         # shrinked = np.array([cv2.resize(item[y:y+size, x:x+size], dsize=(54, 54), interpolation=cv2.INTER_CUBIC) for item in dataset])
         return shrinked
 
@@ -294,9 +294,11 @@ class Dataset:
         start_y = random.randint(0, y_shape - 1)
         start_x = random.randint(0, x_shape - 1)
         # object_factor = random.choice((0.2,))
-        object_factor = random.choice((0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
+        # object_factor = random.choice((0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
+        object_factor = random.choice((0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
         star_max = np.max(star_img)
-        expected_max = self.source_data.average_value + (self.source_data.max_value - self.source_data.average_value) * object_factor
+        # expected_max = self.source_data.average_value + (self.source_data.max_value - self.source_data.average_value) * object_factor
+        expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
         multiplier = expected_max / star_max
         star_img = star_img * multiplier
 
@@ -333,23 +335,25 @@ class Dataset:
             new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
             result.append(new_img)
         result = np.array(result)
-        new_average = np.average(result)
-
-        if new_average - average == 0:
-            drawn = 0
-        else:
-            drawn = 1
-        return result, drawn
+        # new_average = np.average(result)
+        #
+        # if new_average - average == 0:
+        #     drawn = 0
+        # else:
+        #     drawn = 1
+        return result, None
 
     @classmethod
     def prepare_images(cls, imgs):
-        imgs = np.array(
-            [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(1, len(imgs) - 1)])
-
-        imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
-        imgs = imgs - np.average(imgs)
+        # imgs = np.array(
+        #     [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(1, len(imgs) - 1)])
+        imgs = np.array([item - imgs[0] for item in imgs[1:-1]])
+        # imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
+        # imgs = imgs - np.average(imgs)
         imgs[imgs < 0] = 0
-        imgs = imgs ** 2
+        imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
+        # imgs = imgs ** 2
+        imgs.shape = (*imgs.shape, 1)
         return imgs
 
     def make_series(self):
@@ -357,7 +361,7 @@ class Dataset:
         if random.randint(0, 100) > 50:
             imgs, drawn = self.draw_object_on_image_series_numpy(shrinked)
             imgs = self.prepare_images(imgs)
-            result = imgs, np.array([drawn])
+            result = imgs, np.array([1])
         else:
             shrinked = self.prepare_images(shrinked)
             result = shrinked, np.array([0])
@@ -368,7 +372,8 @@ class Dataset:
         X_batch = np.array([item[0] for item in batch])
         TS_batch = np.array([self.source_data.normalized_timestamps[1: -1] for _ in batch])
         y_batch = np.array([item[1] for item in batch])
-        return [X_batch, TS_batch], y_batch
+        # print(X_batch.shape)
+        return X_batch, y_batch
 
     def batch_generator(self, batch_size):
         while True:
@@ -412,55 +417,55 @@ class Dataset:
         return np.amax(images, axis=0)
 
 
-class DataGenerator(tf.keras.utils.Sequence):
-    'Generates data for Keras'
-
-    def __init__(self, dataset, list_IDs=None, labels=None, batch_size=32, n_channels=1,
-                 n_classes=1, shuffle=False):
-        'Initialization'
-        self.dataset = dataset
-        self.dim = (len(self.dataset.raw_dataset), 54, 54, 1)
-        self.batch_size = batch_size
-        self.labels = labels
-        self.list_IDs = list_IDs
-        self.n_channels = n_channels
-        self.n_classes = n_classes
-        self.shuffle = shuffle
-        self.generator = self.dataset.generate_batch(self.batch_size)
-        self.on_epoch_end()
-
-    def __len__(self):
-        'Denotes the number of batches per epoch'
-        return len(self.list_IDs) // self.batch_size
-
-    def __getitem__(self, index):
-        'Generate one batch of data'
-        # Generate indexes of the batch
-        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
-
-        # Find list of IDs
-        list_IDs_temp = [self.list_IDs[k] for k in indexes]
-
-        # Generate data
-        X, y = self.__data_generation(list_IDs_temp)
-
-        return X, y
-
-    def on_epoch_end(self):
-        'Updates indexes after each epoch'
-        self.indexes = np.arange(len(self.list_IDs))
-        if self.shuffle == True:
-            np.random.shuffle(self.indexes)
-
-    def __data_generation(self, _):
-        'Generates data containing batch_size samples'
-        X, y = next(self.generator)
-        y.shape = (self.batch_size, 1)
-        return X, y
-
-
-if __name__ == '__main__':
-    Dataset.crop_folder(
-        input_folder='C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\registered\\Light_BIN-1_4544x3284_EXPOSURE-600.00s_FILTER-NoFilter_RGB',
-        output_folder='C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\'
-    )
+# class DataGenerator(tf.keras.utils.Sequence):
+#     'Generates data for Keras'
+#
+#     def __init__(self, dataset, list_IDs=None, labels=None, batch_size=32, n_channels=1,
+#                  n_classes=1, shuffle=False):
+#         'Initialization'
+#         self.dataset = dataset
+#         self.dim = (len(self.dataset.raw_dataset), 54, 54, 1)
+#         self.batch_size = batch_size
+#         self.labels = labels
+#         self.list_IDs = list_IDs
+#         self.n_channels = n_channels
+#         self.n_classes = n_classes
+#         self.shuffle = shuffle
+#         self.generator = self.dataset.generate_batch(self.batch_size)
+#         self.on_epoch_end()
+#
+#     def __len__(self):
+#         'Denotes the number of batches per epoch'
+#         return len(self.list_IDs) // self.batch_size
+#
+#     def __getitem__(self, index):
+#         'Generate one batch of data'
+#         # Generate indexes of the batch
+#         indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+#
+#         # Find list of IDs
+#         list_IDs_temp = [self.list_IDs[k] for k in indexes]
+#
+#         # Generate data
+#         X, y = self.__data_generation(list_IDs_temp)
+#
+#         return X, y
+#
+#     def on_epoch_end(self):
+#         'Updates indexes after each epoch'
+#         self.indexes = np.arange(len(self.list_IDs))
+#         if self.shuffle == True:
+#             np.random.shuffle(self.indexes)
+#
+#     def __data_generation(self, _):
+#         'Generates data containing batch_size samples'
+#         X, y = next(self.generator)
+#         y.shape = (self.batch_size, 1)
+#         return X, y
+#
+#
+# if __name__ == '__main__':
+#     Dataset.crop_folder(
+#         input_folder='C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\registered\\Light_BIN-1_4544x3284_EXPOSURE-600.00s_FILTER-NoFilter_RGB',
+#         output_folder='C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\'
+#     )

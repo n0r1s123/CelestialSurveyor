@@ -16,8 +16,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 if __name__ == '__main__':
     batch_size = 10
     source_data = SourceData(
-        'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-        # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+        # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
+        'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
         'C:\\git\\object_recognition\\star_samples')
     dataset = Dataset(source_data)
     imgs = dataset.source_data.raw_dataset
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     imgplot = ax.imshow(max_image, cmap='gray')
 
     model = tf.keras.models.load_model(
-        'model12.h5'
+        'model13.h5'
     )
     total_len = len(ys) * len(xs)
     progress_bar = tqdm.tqdm(total=total_len)
@@ -52,7 +52,8 @@ if __name__ == '__main__':
             shrinked.shape = 1, *shrinked.shape
             timestamps = dataset.source_data.normalized_timestamps[1:-1]
             timestamps.shape = 1, *timestamps.shape
-            result = model.predict([shrinked, timestamps], verbose=0)
+            result = model.predict(shrinked, verbose=0)
+            # result = model.predict([shrinked, timestamps], verbose=0)
             if result > 0.8:
                 plt.gca().add_patch(Rectangle((x, y), 54, 54,
                                               edgecolor='green',
