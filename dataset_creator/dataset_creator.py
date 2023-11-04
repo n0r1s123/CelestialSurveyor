@@ -16,38 +16,44 @@ from PIL import Image
 
 
 class SourceData:
-    def __init__(self, folder=None, samples_folder=None):
-        self.raw_dataset, self.exposures, self.timestamps, self.img_shape = self.__load_raw_dataset(folder)
-        normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
-        self.normalized_timestamps = np.array(
-            [item / max(normalized_timestamps) for item in normalized_timestamps])
+    def __init__(self, folders=None, samples_folder=None):
+        self.raw_dataset, self.exposures, self.timestamps, self.img_shape = self.__load_raw_dataset(folders)
+        normalized_timestamps = [[(item - min(timestamps)).total_seconds() for item in timestamps] for timestamps in self.timestamps]
+        self.normalized_timestamps = [np.array(
+            [item / max(timestamps) for item in timestamps]) for timestamps in normalized_timestamps]
         self.object_samples = self.__load_samples(samples_folder)
-        self.max_value = np.max(self.raw_dataset)
-        self.min_value = np.min(self.raw_dataset)
-        self.average_value = np.average(self.raw_dataset)
+        # self.max_value = np.max(self.raw_dataset)
+        # self.min_value = np.min(self.raw_dataset)
+        # self.average_value = np.average(self.raw_dataset)
 
     @classmethod
-    def __load_raw_dataset(cls, folder):
-        file_list = [os.path.join(folder, item) for item in os.listdir(folder)]
-        raw_dataset = np.array([np.array(XISF(item).read_image(0)[:, :, 0]) for item in file_list])
-        timestamps = []
-        exposures = []
-        for num, item in enumerate(file_list, start=1):
-            img_meta = XISF(item).get_images_metadata()[0]
-            exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
-            timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
-            timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
-            exposures.append(exposure)
-            timestamps.append(timestamp)
-
+    def __load_raw_dataset(cls, folders):
+        raw_dataset = [np.array([np.array(XISF(item).read_image(0)[:, :, 0]) for item in [os.path.join(folder, file_name) for file_name in os.listdir(folder)]]) for folder in folders]
+        all_timestamps = []
+        all_exposures = []
+        img_shapes = []
+        for num1, folder in enumerate(folders):
+            file_list = [os.path.join(folder, item) for item in os.listdir(folder)]
+            timestamps = []
+            exposures = []
+            for num, item in enumerate(file_list, start=1):
+                img_meta = XISF(item).get_images_metadata()[0]
+                exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
+                timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
+                timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
+                exposures.append(exposure)
+                timestamps.append(timestamp)
+            img_shape = raw_dataset[num1].shape[1:]
+            all_timestamps.append(timestamps)
+            all_exposures.append(exposures)
+            img_shapes.append(img_shape)
         print("Raw image dataset loaded:")
         print(f"LEN: {len(raw_dataset)}")
-        print(f"SHAPE: {raw_dataset.shape}")
-        print(f"Memory: {(raw_dataset.itemsize * raw_dataset.size) // (1024 * 1024)} Mb")
-        print(f"Timestamps: {len(timestamps)}")
-        img_shape = raw_dataset.shape[1:]
+        print(f"SHAPE: {[item.shape for item in raw_dataset]}")
+        print(f"Memory: {sum([item.itemsize * item.size for item in raw_dataset]) // (1024 * 1024)} Mb")
+        print(f"Timestamps: {[len(item) for item in all_timestamps]}")
 
-        return raw_dataset, exposures, timestamps, img_shape
+        return raw_dataset, all_exposures, all_timestamps, img_shapes
 
     @classmethod
     def __load_samples(cls, samples_folder):
@@ -207,17 +213,76 @@ class Dataset:
                 codec='lz4hc', shuffle=True
             )
 
-    def get_shrinked_img_series(self, size, y, x, dataset=None):
-        dataset = self.source_data.raw_dataset if dataset is None else dataset
+    @classmethod
+    def crop_folder_some_from_date(cls, input_folder, output_folder, img_num=10):
+        if not os.path.exists(output_folder):
+            pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
+        file_list = [item for item in os.listdir(input_folder) if "c_d_r.xisf" in item]
+        timestamped_file_list = []
+        for item in file_list:
+            fp = os.path.join(input_folder, item)
+            xisf = XISF(fp)
+            timestamp = xisf.get_images_metadata()[0]["FITSKeywords"]["DATE-OBS"][0]['value']
+            timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
+            timestamped_file_list.append((fp, timestamp))
+        timestamped_file_list.sort(key=lambda x: x[1])
+        new_timestamped_file_list = []
+        _, start_date = timestamped_file_list[0]
+        start_date = start_date.date()
+        night_num = 0
+        for fp, timestamp in timestamped_file_list:
+            if timestamp.date() == start_date:
+                if night_num < img_num:
+                    new_timestamped_file_list.append((fp, timestamp))
+                    night_num += 1
+            else:
+                new_timestamped_file_list.append((fp, timestamp))
+                night_num = 1
+                start_date = timestamp.date()
+        timestamped_file_list = new_timestamped_file_list
+
+        boarders = np.array([])
+        for fp, timestamp in timestamped_file_list:
+            xisf = XISF(fp)
+            img_data = xisf.read_image(0)
+            img_data = Dataset.to_gray(img_data)
+            y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
+            y_boarders, x_boarders = Dataset.crop_fine(
+                img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
+            boarders = np.append(boarders, np.array([*y_boarders, *x_boarders]))
+        y_boarders = int(np.max(boarders[::4])), int(np.min(boarders[1::4]))
+        x_boarders = int(np.max(boarders[2::4])), int(np.min(boarders[3::4]))
+        for num, (fp, timestamp) in enumerate(timestamped_file_list, start=1):
+            print(f"{num} Cropping image {fp}")
+            xisf = XISF(fp)
+            file_meta = xisf.get_file_metadata()
+            img_meta = xisf.get_images_metadata()
+            img_data = xisf.read_image(0)
+            img_data = Dataset.to_gray(img_data)
+            img_data = Dataset.crop_image(img_data, y_boarders, x_boarders)
+            img_data = Dataset.stretch_image(img_data)
+            img_data = np.array(img_data)
+            img_data = np.float32(img_data)
+            img_data.shape = *img_data.shape, 1
+            XISF.write(
+                os.path.join(output_folder, f"image_{num:04}.xisf"), img_data,
+                creator_app="My script v1.0", image_metadata=img_meta[0], xisf_metadata=file_meta,
+                codec='lz4hc', shuffle=True
+            )
+
+    def get_shrinked_img_series(self, size, y, x, dataset=None, dataset_idx=0):
+        dataset = self.source_data.raw_dataset[dataset_idx] if dataset is None else dataset
         shrinked = np.copy(dataset[:, y:y+size, x:x+size])
         # shrinked = np.array([cv2.resize(item[y:y+size, x:x+size], dsize=(54, 54), interpolation=cv2.INTER_CUBIC) for item in dataset])
         return shrinked
 
-    def get_random_shrink(self):
+    def get_random_shrink(self, dataset_idx=0):
         size = 54
         # size = random.randint(54, min(self.img_shape[:2]))
-        y = random.randint(0, self.source_data.img_shape[0] - size)
-        x = random.randint(0, self.source_data.img_shape[1] - size)
+        # print(dataset_idx)
+        # print(self.source_data.img_shape)
+        y = random.randint(0, self.source_data.img_shape[dataset_idx][0] - size)
+        x = random.randint(0, self.source_data.img_shape[dataset_idx][1] - size)
         return size, y, x
 
     @classmethod
@@ -230,6 +295,7 @@ class Dataset:
         :return: 2 axis np.array.
         """
         star_y_size, star_x_size = star.shape[:2]
+        # print(image.shape)
 
         image_y_size, image_x_size = image.shape
         x, y = coords
@@ -283,7 +349,7 @@ class Dataset:
             image = cls.insert_star_by_coords(image, star, (start_y + dy, start_x + dx))
         return image
 
-    def draw_object_on_image_series_numpy(self, imgs):
+    def draw_object_on_image_series_numpy(self, imgs, dataset_idx=0):
         # print(imgs.shape)
         average = np.average(imgs)
         result = []
@@ -295,7 +361,8 @@ class Dataset:
         start_x = random.randint(0, x_shape - 1)
         # object_factor = random.choice((0.2,))
         # object_factor = random.choice((0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
-        object_factor = random.choice((0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
+        # object_factor = random.choice((0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
+        object_factor = random.choice((0.6, 0.7, 0.8, 0.9, 1))
         star_max = np.max(star_img)
         # expected_max = self.source_data.average_value + (self.source_data.max_value - self.source_data.average_value) * object_factor
         expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
@@ -310,12 +377,12 @@ class Dataset:
         divider = 10
         choices = list(range(min_vector, 0)) + list(range(1, max_vector))
         movement_vector = np.array([random.choice(choices)/divider, random.choice(choices)/divider])
-        start_ts = self.source_data.timestamps[start_image_idx]
+        start_ts = self.source_data.timestamps[dataset_idx][start_image_idx]
 
         movement_vector = - movement_vector
         to_beginning_slice = slice(None, start_image_idx)
         for img, exposure, timestamp in zip(
-                imgs[to_beginning_slice][::-1], self.source_data.exposures[to_beginning_slice], self.source_data.timestamps[to_beginning_slice]
+                imgs[to_beginning_slice][::-1], self.source_data.exposures[dataset_idx][to_beginning_slice], self.source_data.timestamps[dataset_idx][to_beginning_slice]
         ):
             inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
             y, x = inter_image_movement_vector + np.array([start_y, start_x])
@@ -328,7 +395,7 @@ class Dataset:
 
         to_end_slice = slice(start_image_idx, None, None)
         for img, exposure, timestamp in zip(
-                imgs[to_end_slice], self.source_data.exposures[to_end_slice], self.source_data.timestamps[to_end_slice]
+                imgs[to_end_slice], self.source_data.exposures[dataset_idx][to_end_slice], self.source_data.timestamps[dataset_idx][to_end_slice]
         ):
             inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
             y, x = inter_image_movement_vector + np.array([start_y, start_x])
@@ -345,9 +412,9 @@ class Dataset:
 
     @classmethod
     def prepare_images(cls, imgs):
-        # imgs = np.array(
-        #     [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(1, len(imgs) - 1)])
-        imgs = np.array([item - imgs[0] for item in imgs[1:-1]])
+        imgs = np.array(
+            [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(1, len(imgs) - 1)])
+        # imgs = np.array([item - imgs[0] for item in imgs[1:-1]])
         # imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
         # imgs = imgs - np.average(imgs)
         imgs[imgs < 0] = 0
@@ -356,10 +423,12 @@ class Dataset:
         imgs.shape = (*imgs.shape, 1)
         return imgs
 
-    def make_series(self):
-        shrinked = self.get_shrinked_img_series(*self.get_random_shrink())
-        if random.randint(0, 100) > 50:
-            imgs, drawn = self.draw_object_on_image_series_numpy(shrinked)
+    def make_series(self, dataset_idx=0):
+
+        # print(len(self.source_data.raw_dataset))
+        shrinked = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
+        if random.randint(0, 100) > 60:
+            imgs, drawn = self.draw_object_on_image_series_numpy(shrinked, dataset_idx=dataset_idx)
             imgs = self.prepare_images(imgs)
             result = imgs, np.array([1])
         else:
@@ -368,7 +437,8 @@ class Dataset:
         return result
 
     def make_batch(self, batch_size):
-        batch = [self.make_series() for _ in range(batch_size)]
+        dataset_idx = random.randrange(0, len(self.source_data.raw_dataset))
+        batch = [self.make_series(dataset_idx) for _ in range(batch_size)]
         X_batch = np.array([item[0] for item in batch])
         TS_batch = np.array([self.source_data.normalized_timestamps[1: -1] for _ in batch])
         y_batch = np.array([item[1] for item in batch])
@@ -464,8 +534,13 @@ class Dataset:
 #         return X, y
 #
 #
-# if __name__ == '__main__':
-#     Dataset.crop_folder(
-#         input_folder='C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\registered\\Light_BIN-1_4544x3284_EXPOSURE-600.00s_FILTER-NoFilter_RGB',
-#         output_folder='C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\'
-#     )
+if __name__ == '__main__':
+    # Dataset.crop_folder_some_from_date(
+    #     input_folder='C:\\Users\\bsolomin\\Astro\\SeaHorse\\Registered',
+    #     output_folder='C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+    #     img_num=15
+    # )
+    Dataset.crop_folder(
+        input_folder='C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Pix\\registered\\Light_BIN-1_4944x3284_EXPOSURE-300.00s_FILTER-NoFilter_RGB\\',
+        output_folder='C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+    )

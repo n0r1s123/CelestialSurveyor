@@ -16,13 +16,16 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 if __name__ == '__main__':
     batch_size = 10
     source_data = SourceData(
-        # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-        'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+        [
+            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+        ],
         'C:\\git\\object_recognition\\star_samples')
     dataset = Dataset(source_data)
-    imgs = dataset.source_data.raw_dataset
-    for _ in range(5):
-        imgs, _ = dataset.draw_object_on_image_series_numpy(imgs)
+    imgs = dataset.source_data.raw_dataset[0]
+    # for _ in range(5):
+    #     imgs, _ = dataset.draw_object_on_image_series_numpy(imgs)
 
     max_image = dataset.get_max_image(imgs)
     ys = np.arange(0, imgs[0].shape[0], 54)
@@ -41,7 +44,7 @@ if __name__ == '__main__':
     imgplot = ax.imshow(max_image, cmap='gray')
 
     model = tf.keras.models.load_model(
-        'model13.h5'
+        'model15.h5'
     )
     total_len = len(ys) * len(xs)
     progress_bar = tqdm.tqdm(total=total_len)
@@ -50,8 +53,8 @@ if __name__ == '__main__':
             shrinked = dataset.get_shrinked_img_series(54, y, x, imgs)
             shrinked = dataset.prepare_images(shrinked)
             shrinked.shape = 1, *shrinked.shape
-            timestamps = dataset.source_data.normalized_timestamps[1:-1]
-            timestamps.shape = 1, *timestamps.shape
+            # timestamps = dataset.source_data.normalized_timestamps[0][1:-1]
+            # timestamps.shape = 1, *timestamps.shape
             result = model.predict(shrinked, verbose=0)
             # result = model.predict([shrinked, timestamps], verbose=0)
             if result > 0.8:

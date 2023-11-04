@@ -53,7 +53,14 @@ def build_rnn_model(input_shape):
                activation='relu'),
         tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
         tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.ConvLSTM2D(filters=32, kernel_size=(3, 3), padding='same',
+        tf.keras.layers.Conv3D(filters=64, kernel_size=(3, 3, 3), padding='same',
+               activation='relu'),
+        tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
+        tf.keras.layers.Conv3D(filters=128, kernel_size=(3, 3, 3), padding='same',
+               activation='relu'),
+        tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.ConvLSTM2D(filters=256, kernel_size=(2, 2), padding='same',
                    return_sequences=False),
         tf.keras.layers.BatchNormalization(),
         # tf.keras.layers.ConvLSTM2D(filters=32, kernel_size=(3, 3), padding='same', return_sequences=True),
@@ -63,7 +70,7 @@ def build_rnn_model(input_shape):
         # tf.keras.layers.ConvLSTM2D(filters=32, kernel_size=(3, 3), padding='same', return_sequences=False),
         # tf.keras.layers.BatchNormalization(),
         tf.keras.layers.Flatten(),  # Flatten the output before passing it through Dense layers
-        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dense(128, activation='relu'),
         tf.keras.layers.Dense(1, activation='sigmoid')  # Output a single node with sigmoid activation for binary classification
     ])
 
@@ -97,13 +104,17 @@ if __name__ == '__main__':
 
     # Load model
     model = tf.keras.models.load_model(
-        'model13.h5'
+        'model14.h5'
     )
 
     print(model.summary())
     source_data = SourceData(
-        # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped',
-        'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+        [
+            # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped',
+            # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped',
+            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+         ],
         samples_folder='C:\\git\\object_recognition\\star_samples')
 
     dataset = Dataset(source_data)
@@ -118,9 +129,11 @@ if __name__ == '__main__':
             validation_data=val_generator,
             steps_per_epoch=1000,
             validation_steps=100,
-            epochs=20,
+            epochs=15,
         )
     except KeyboardInterrupt:
-        model.save("model13.h5")
-    model.save("model13.h5")
+        model.save("model15.h5")
+    model.save("model15.h5")
+    # finally:
+    #     pass
 
