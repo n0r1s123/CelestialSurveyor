@@ -63,32 +63,10 @@ def build_rnn_model(input_shape):
         tf.keras.layers.ConvLSTM2D(filters=256, kernel_size=(2, 2), padding='same',
                    return_sequences=False),
         tf.keras.layers.BatchNormalization(),
-        # tf.keras.layers.ConvLSTM2D(filters=32, kernel_size=(3, 3), padding='same', return_sequences=True),
-        # tf.keras.layers.BatchNormalization(),
-        # tf.keras.layers.ConvLSTM2D(filters=32, kernel_size=(3, 3), padding='same', return_sequences=True),
-        # tf.keras.layers.BatchNormalization(),
-        # tf.keras.layers.ConvLSTM2D(filters=32, kernel_size=(3, 3), padding='same', return_sequences=False),
-        # tf.keras.layers.BatchNormalization(),
         tf.keras.layers.Flatten(),  # Flatten the output before passing it through Dense layers
         tf.keras.layers.Dense(128, activation='relu'),
         tf.keras.layers.Dense(1, activation='sigmoid')  # Output a single node with sigmoid activation for binary classification
     ])
-
-    # model = tf.keras.models.Sequential()
-    #
-    # # Add a 3D convolutional layer
-    # model.add(tf.keras.layers.Conv3D(32, kernel_size=(3, 3, 3), activation='relu',
-    #                  input_shape=(None, 54, 54, 1)))
-    #
-    # # Add a 3D max pooling layer
-    # model.add(tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)))
-    #
-    # # Flatten the output for dense layers
-    # model.add(tf.keras.layers.Flatten())
-    #
-    # # Add one or more dense layers for classification
-    # model.add(tf.keras.layers.Dense(64, activation='relu'))
-    # model.add(tf.keras.layers.Dense(1, activation='sigmoid'))  # Output layer (binary classification)
 
     return model
 
@@ -119,8 +97,6 @@ if __name__ == '__main__':
 
     dataset = Dataset(source_data)
 
-    # training_generator = DataGenerator(dataset, range(80000), range(80000), batch_size=10)
-    # val_generator = DataGenerator(dataset, range(5000), range(5000), batch_size=10)
     training_generator = dataset.batch_generator(batch_size=10)
     val_generator = dataset.batch_generator(batch_size=10)
     try:
@@ -134,6 +110,3 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         model.save("model15.h5")
     model.save("model15.h5")
-    # finally:
-    #     pass
-
