@@ -321,8 +321,7 @@ class Dataset:
         :return: 2 axis np.array.
         """
         star_y_size, star_x_size = star.shape[:2]
-
-        image_y_size, image_x_size = image.shape
+        image_y_size, image_x_size = image.shape[:2]
         x, y = coords
         x = round(x)
         y = round(y)
@@ -362,9 +361,15 @@ class Dataset:
         """
         per_image_movement_vector = np.array(movement_vector) * exposure_time / 3600
         y_move, x_move = per_image_movement_vector
+
         start_y, start_x = start_coords
-        x_moves_per_y_moves = x_move / y_move
+
         dx = 0
+        if x_move == y_move == 0:
+            image = cls.insert_star_by_coords(image, star, (start_y, start_x))
+            return image
+        x_moves_per_y_moves = x_move / y_move
+
         for dy in range(round(y_move + 1)):
             if dy * x_moves_per_y_moves // 1 > dx:
                 dx += 1
@@ -372,6 +377,35 @@ class Dataset:
                 dx -= 1
             image = cls.insert_star_by_coords(image, star, (start_y + dy, start_x + dx))
         return image
+
+
+    def draw_one_image_artefact(self, imgs):
+        number_of_artefacts = random.choice(list(range(1, 5)) + [0] * 10)
+        for _ in range(number_of_artefacts):
+            y_shape, x_shape = imgs[0].shape[:2]
+            star_img = random.choice(self.source_data.object_samples)
+            start_image_idx = random.randint(0, len(imgs) - 1)
+            y = random.randint(0, y_shape - 1)
+            x = random.randint(0, x_shape - 1)
+            object_factor = random.randrange(120, 300) / 300
+            star_max = np.max(star_img)
+            expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
+            multiplier = expected_max / star_max
+            star_img = star_img * multiplier
+
+            # 0 means point like object which appears on the single image
+            # 1 means satellite like object which appears on the single image
+            is_satellite_like = random.randrange(0, 2)
+            if not is_satellite_like:
+                movement_vector = np.array([0, 0])
+            else:
+                movement_vector = np.array([random.randrange(1, 300) * 100, random.randrange(1, 300) * 100])
+
+            imgs[start_image_idx] = self.calculate_star_form_on_single_image(
+                imgs[start_image_idx], star_img, (y, x), movement_vector, 10000)
+            imgs[start_image_idx] = self.calculate_star_form_on_single_image(
+                imgs[start_image_idx], star_img, (y, x), - movement_vector, 10000)
+        return imgs
 
     def draw_object_on_image_series_numpy(self, imgs, dataset_idx=0):
         result = []
@@ -383,12 +417,11 @@ class Dataset:
         # object_factor = random.choice((0.2,))
         # object_factor = random.choice((0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
         # object_factor = random.choice((0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
-        object_factor = random.randrange(120, 300) / 300
+        object_factor = random.randrange(120, 301) / 300
         star_max = np.max(star_img)
         expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
         multiplier = expected_max / star_max
         star_img = star_img * multiplier
-
         max_vector = 300
         min_vector = -300
         divider = 10
@@ -433,14 +466,17 @@ class Dataset:
 
     def make_series(self, dataset_idx=0):
 
-        shrinked = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
-        if random.randint(0, 100) > 60:
-            imgs, drawn = self.draw_object_on_image_series_numpy(shrinked, dataset_idx=dataset_idx)
-            imgs = self.prepare_images(imgs)
-            result = imgs, np.array([1])
+        imgs = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
+        if random.randint(0, 100) > 90:
+            imgs, drawn = self.draw_object_on_image_series_numpy(imgs, dataset_idx=dataset_idx)
+            res = 1
         else:
-            shrinked = self.prepare_images(shrinked)
-            result = shrinked, np.array([0])
+            res = 0
+
+        if random.randint(0, 100) >= 0:
+            imgs = self.draw_one_image_artefact(imgs)
+        imgs = self.prepare_images(imgs)
+        result = imgs, np.array([res])
         return result
 
     def make_batch(self, batch_size):

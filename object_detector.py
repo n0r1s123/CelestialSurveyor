@@ -82,7 +82,7 @@ if __name__ == '__main__':
 
     # Load model
     model = tf.keras.models.load_model(
-        'model15.h5'
+        'model16.h5'
     )
 
     print(model.summary())
@@ -105,8 +105,8 @@ if __name__ == '__main__':
             validation_data=val_generator,
             steps_per_epoch=1000,
             validation_steps=100,
-            epochs=30,
+            epochs=20,
         )
     except KeyboardInterrupt:
-        model.save("model15.h5")
-    model.save("model15.h5")
+        model.save("model16.h5")
+    model.save("model16.h5")
