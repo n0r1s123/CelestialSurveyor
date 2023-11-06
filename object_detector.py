@@ -82,15 +82,15 @@ if __name__ == '__main__':
 
     # Load model
     model = tf.keras.models.load_model(
-        'model14.h5'
+        'model15.h5'
     )
 
     print(model.summary())
     source_data = SourceData(
         [
-            # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped',
-            # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped',
+            'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped',
+            'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+            'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped',
             'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
          ],
         samples_folder='C:\\git\\object_recognition\\star_samples')
@@ -105,7 +105,7 @@ if __name__ == '__main__':
             validation_data=val_generator,
             steps_per_epoch=1000,
             validation_steps=100,
-            epochs=15,
+            epochs=30,
         )
     except KeyboardInterrupt:
         model.save("model15.h5")

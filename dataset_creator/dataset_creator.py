@@ -9,24 +9,28 @@ import pathlib
 from auto_stretch.stretch import Stretch
 from xisf import XISF
 from PIL import Image
+from bs4 import BeautifulSoup
 
 
 class SourceData:
     def __init__(self, folders=None, samples_folder=None):
-        self.raw_dataset, self.exposures, self.timestamps, self.img_shape = self.__load_raw_dataset(folders)
+        self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = self.__load_raw_dataset(folders)
         normalized_timestamps = [[(item - min(timestamps)).total_seconds() for item in timestamps] for timestamps in self.timestamps]
         self.normalized_timestamps = [np.array(
             [item / max(timestamps) for item in timestamps]) for timestamps in normalized_timestamps]
         self.object_samples = self.__load_samples(samples_folder)
 
+        print(self.exclusion_boxes)
+
     @classmethod
     def __load_raw_dataset(cls, folders):
-        raw_dataset = [np.array([np.array(XISF(item).read_image(0)[:, :, 0]) for item in [os.path.join(folder, file_name) for file_name in os.listdir(folder)]]) for folder in folders]
+        raw_dataset = [np.array([np.array(XISF(item).read_image(0)[:, :, 0]) for item in [os.path.join(folder, file_name) for file_name in os.listdir(folder) if file_name.endswith('.xisf')]]) for folder in folders]
         all_timestamps = []
         all_exposures = []
+        all_exclusion_boxes = []
         img_shapes = []
         for num1, folder in enumerate(folders):
-            file_list = [os.path.join(folder, item) for item in os.listdir(folder)]
+            file_list = [os.path.join(folder, item) for item in os.listdir(folder) if item.endswith('.xisf')]
             timestamps = []
             exposures = []
             for num, item in enumerate(file_list, start=1):
@@ -37,6 +41,8 @@ class SourceData:
                 exposures.append(exposure)
                 timestamps.append(timestamp)
             img_shape = raw_dataset[num1].shape[1:]
+            exclusion_boxes = cls.__load_exclusion_boxes(folder, img_shape)
+            all_exclusion_boxes.append(exclusion_boxes)
             all_timestamps.append(timestamps)
             all_exposures.append(exposures)
             img_shapes.append(img_shape)
@@ -46,13 +52,44 @@ class SourceData:
         print(f"Memory: {sum([item.itemsize * item.size for item in raw_dataset]) // (1024 * 1024)} Mb")
         print(f"Timestamps: {[len(item) for item in all_timestamps]}")
 
-        return raw_dataset, all_exposures, all_timestamps, img_shapes
+        return raw_dataset, all_exposures, all_timestamps, img_shapes, all_exclusion_boxes
 
     @classmethod
     def __load_samples(cls, samples_folder):
         file_list = [os.path.join(samples_folder, item) for item in os.listdir(samples_folder) if ".tif" in item]
         samples = np.array([np.array(Image.open(item)) for item in file_list])
         return samples
+
+    @classmethod
+    def __load_exclusion_boxes(cls, folder, img_shape):
+        # Reading data from the xml file
+        fp = os.path.join(folder, 'annotations.xml')
+        if not os.path.exists(fp):
+            return
+
+        with open(fp, 'r') as f:
+            data = f.read()
+        bs_data = BeautifulSoup(data, 'xml')
+        boxes = []
+        width = float(bs_data.find('image').get("width"))
+        height = float(bs_data.find('image').get("height"))
+        if img_shape is None:
+            x_mult, y_mult = 1, 1
+        else:
+            y_shape, x_shape = img_shape[:2]
+            y_mult = y_shape / height
+            x_mult = x_shape / width
+
+        for tag in bs_data.find_all('box', {'label': 'Asteroid'}):
+            xtl = round(float(tag.get("xtl")) * x_mult)
+            ytl = round(float(tag.get("ytl")) * y_mult)
+            xbr = round(float(tag.get("xbr")) * x_mult)
+            ybr = round(float(tag.get("ybr")) * y_mult)
+            boxes.append((xtl, ytl, xbr, ybr))
+
+        boxes = np.array(boxes)
+
+        return boxes
 
 
 class Dataset:
@@ -256,8 +293,22 @@ class Dataset:
 
     def get_random_shrink(self, dataset_idx=0):
         size = 54
-        y = random.randint(0, self.source_data.img_shape[dataset_idx][0] - size)
-        x = random.randint(0, self.source_data.img_shape[dataset_idx][1] - size)
+        exclusion_boxes = self.source_data.exclusion_boxes[dataset_idx]
+        generated = False
+
+        # TODO: bad implementation need to rework
+        while not generated:
+            y = random.randint(0, self.source_data.img_shape[dataset_idx][0] - size)
+            x = random.randint(0, self.source_data.img_shape[dataset_idx][1] - size)
+            if exclusion_boxes is not None and len(exclusion_boxes) > 0:
+                for box in exclusion_boxes:
+                    x1, y1, x2, y2 = box
+                    if (x1 - size <= x <= x2 + size) and (y1 - size <= y <= y2 + size):
+                        break
+                else:
+                    generated = True
+            else:
+                generated = True
         return size, y, x
 
     @classmethod
@@ -332,7 +383,7 @@ class Dataset:
         # object_factor = random.choice((0.2,))
         # object_factor = random.choice((0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
         # object_factor = random.choice((0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1))
-        object_factor = random.choice((0.6, 0.7, 0.8, 0.9, 1))
+        object_factor = random.randrange(120, 300) / 300
         star_max = np.max(star_img)
         expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
         multiplier = expected_max / star_max
@@ -396,7 +447,7 @@ class Dataset:
         dataset_idx = random.randrange(0, len(self.source_data.raw_dataset))
         batch = [self.make_series(dataset_idx) for _ in range(batch_size)]
         X_batch = np.array([item[0] for item in batch])
-        TS_batch = np.array([self.source_data.normalized_timestamps[1: -1] for _ in batch])
+        # TS_batch = np.array([self.source_data.normalized_timestamps[1: -1] for _ in batch])
         y_batch = np.array([item[1] for item in batch])
         return X_batch, y_batch
 
