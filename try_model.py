@@ -14,12 +14,13 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 if __name__ == '__main__':
-    batch_size = 10
+    batch_size = 20
     source_data = SourceData(
         [
             # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
         ],
         'C:\\git\\object_recognition\\star_samples')
     dataset = Dataset(source_data)
@@ -46,21 +47,24 @@ if __name__ == '__main__':
     model = tf.keras.models.load_model(
         'model15.h5'
     )
-    total_len = len(ys) * len(xs)
+    coords = np.array([np.array([y, x]) for y in ys for x in xs])
+    number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
+    coord_batches = np.array_split(coords, number_of_batches, axis=0)
+    total_len = len(coord_batches)
     progress_bar = tqdm.tqdm(total=total_len)
-    for y in ys:
-        for x in xs:
+    for coord_batch in coord_batches:
+        imgs_batch = []
+        for y, x in coord_batch:
             shrinked = dataset.get_shrinked_img_series(54, y, x, imgs)
             shrinked = dataset.prepare_images(shrinked)
-            shrinked.shape = 1, *shrinked.shape
-            # timestamps = dataset.source_data.normalized_timestamps[0][1:-1]
-            # timestamps.shape = 1, *timestamps.shape
-            result = model.predict(shrinked, verbose=0)
-            # result = model.predict([shrinked, timestamps], verbose=0)
-            if result > 0.8:
+            imgs_batch.append(shrinked)
+        imgs_batch = np.array(imgs_batch)
+        results = model.predict(imgs_batch, verbose=0)
+        for res, (y, x) in zip(results, coord_batch):
+            if res > 0.8:
                 plt.gca().add_patch(Rectangle((x, y), 54, 54,
                                               edgecolor='green',
                                               facecolor='none',
                                               lw=4))
-            progress_bar.update()
+        progress_bar.update()
     plt.show()
