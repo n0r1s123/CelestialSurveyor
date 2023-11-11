@@ -48,6 +48,8 @@ def build_rnn_model(input_shape):
     # # Create the model
     # model = tf.keras.models.Model(inputs=[image_input, timestamp_input], outputs=output)
 
+
+    # TODO: Add timestamps
     model = tf.keras.models.Sequential([
         tf.keras.layers.Conv3D(filters=32, kernel_size=(3, 3, 3), input_shape=(None, 54, 54, 1), padding='same',
                activation='relu'),
@@ -82,16 +84,18 @@ if __name__ == '__main__':
 
     # Load model
     model = tf.keras.models.load_model(
-        'model16.h5'
+        'model20.h5'
     )
 
     print(model.summary())
     source_data = SourceData(
         [
-            'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped',
-            'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-            'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped',
-            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+            # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
          ],
         samples_folder='C:\\git\\object_recognition\\star_samples')
 
@@ -103,10 +107,10 @@ if __name__ == '__main__':
         model.fit(
             training_generator,
             validation_data=val_generator,
-            steps_per_epoch=1000,
-            validation_steps=100,
-            epochs=20,
+            steps_per_epoch=2000,
+            validation_steps=200,
+            epochs=5,
         )
     except KeyboardInterrupt:
-        model.save("model16.h5")
-    model.save("model16.h5")
+        model.save("model20.h5")
+    model.save("model20.h5")
