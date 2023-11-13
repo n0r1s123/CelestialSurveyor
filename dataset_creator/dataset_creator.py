@@ -1,5 +1,7 @@
 import datetime
+import json
 import os
+import pytz
 import random
 
 import cv2
@@ -18,6 +20,11 @@ class SourceData:
         normalized_timestamps = [[(item - min(timestamps)).total_seconds() for item in timestamps] for timestamps in self.timestamps]
         self.normalized_timestamps = [np.array(
             [item / max(timestamps) for item in timestamps]) for timestamps in normalized_timestamps]
+        diff_timestamps = [np.array([(timestamps[i] - timestamps[i-1]).total_seconds() for i in range(1, len(timestamps))]) for timestamps in self.timestamps]
+        print(diff_timestamps)
+        self.diff_timestamps = [(diffs - np.min(diffs)) / (np.max(diffs) - np.min(diffs)) for diffs in diff_timestamps]
+        # for diffs in diff_timestamps:
+        #     (diffs - np.min(diffs)) / (np.max(diffs) - np.min(diffs))
         self.object_samples = self.__load_samples(samples_folder)
 
         print(self.exclusion_boxes)
@@ -35,9 +42,11 @@ class SourceData:
             exposures = []
             for num, item in enumerate(file_list, start=1):
                 img_meta = XISF(item).get_images_metadata()[0]
+                # print(json.dumps(img_meta["FITSKeywords"], indent=4))
                 exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
                 timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
                 timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
+                timestamp.replace(tzinfo=pytz.UTC)
                 exposures.append(exposure)
                 timestamps.append(timestamp)
             img_shape = raw_dataset[num1].shape[1:]
@@ -407,7 +416,23 @@ class Dataset:
                 imgs[start_image_idx], star_img, (y, x), - movement_vector, 10000)
         return imgs
 
+    def draw_hot_pixels(self, imgs):
+        # number_of_affected_images = random.randrange(len(imgs)//2, len(imgs) + 1)
+        probablity = 50
+        result = []
+        for img in imgs:
+            if random.randrange(1, 101) < probablity:
+                y_shape, x_shape = imgs[0].shape[:2]
+                y = random.randint(0, y_shape - 1)
+                x = random.randint(0, x_shape - 1)
+                img[y, x] = 1
+            result.append(img)
+        result = np.array(result)
+        return result
+
     def draw_object_on_image_series_numpy(self, imgs, dataset_idx=0):
+        drawn = 1
+        old_images = np.copy(imgs)
         result = []
         y_shape, x_shape = imgs[0].shape[:2]
         star_img = random.choice(self.source_data.object_samples)
@@ -422,11 +447,14 @@ class Dataset:
         expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
         multiplier = expected_max / star_max
         star_img = star_img * multiplier
-        max_vector = 300
-        min_vector = -300
-        divider = 10
+        max_vector = 3000
+        min_vector = -3000
+        divider = 100
         choices = list(range(min_vector, 0)) + list(range(1, max_vector))
         movement_vector = np.array([random.choice(choices)/divider, random.choice(choices)/divider])
+        time_diff = (self.source_data.timestamps[dataset_idx][-1] - self.source_data.timestamps[dataset_idx][0]).total_seconds()/3600
+        if all(item * time_diff < 1 for item in movement_vector):
+            drawn=0
         start_ts = self.source_data.timestamps[dataset_idx][start_image_idx]
 
         movement_vector = - movement_vector
@@ -452,12 +480,15 @@ class Dataset:
             new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
             result.append(new_img)
         result = np.array(result)
-        return result, None
+
+        if (result == old_images).all():
+            drawn = 0
+        return result, drawn
 
     @classmethod
     def prepare_images(cls, imgs):
         imgs = np.array(
-            [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(1, len(imgs) - 1)])
+            [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(1, len(imgs))])
         imgs[imgs < 0] = 0
         imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
         # imgs = imgs ** 2
@@ -467,14 +498,19 @@ class Dataset:
     def make_series(self, dataset_idx=0):
 
         imgs = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
-        if random.randint(0, 100) > 80:
+        if random.randint(1, 101) > 50:
             imgs, drawn = self.draw_object_on_image_series_numpy(imgs, dataset_idx=dataset_idx)
-            res = 1
+            res = drawn
+            # res = 1
         else:
             res = 0
 
-        if random.randint(0, 100) >= 0:
-            imgs = self.draw_one_image_artefact(imgs)
+        if res == 0:
+            if random.randint(0, 100) >= 90:
+                imgs = self.draw_one_image_artefact(imgs)
+            if random.randint(0, 100) >= 90:
+                imgs = self.draw_hot_pixels(imgs)
+
         imgs = self.prepare_images(imgs)
         result = imgs, np.array([res])
         return result
@@ -483,9 +519,12 @@ class Dataset:
         dataset_idx = random.randrange(0, len(self.source_data.raw_dataset))
         batch = [self.make_series(dataset_idx) for _ in range(batch_size)]
         X_batch = np.array([item[0] for item in batch])
-        # TS_batch = np.array([self.source_data.normalized_timestamps[1: -1] for _ in batch])
+        TS_batch = np.array([[self.source_data.diff_timestamps[dataset_idx], self.source_data.normalized_timestamps[dataset_idx][1:]] for _ in batch])
+        TS_batch = np.swapaxes(TS_batch, 1, 2)
+        # TS_batch = np.array([self.source_data.normalized_timestamps[dataset_idx][1:] for _ in batch])
         y_batch = np.array([item[1] for item in batch])
-        return X_batch, y_batch
+        # tx_input = np.array([TS_diff_batch, TS])
+        return [X_batch, TS_batch], y_batch
 
     def batch_generator(self, batch_size):
         while True:

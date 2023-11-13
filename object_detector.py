@@ -48,27 +48,82 @@ def build_rnn_model(input_shape):
     # # Create the model
     # model = tf.keras.models.Model(inputs=[image_input, timestamp_input], outputs=output)
 
+    #
+    # # TODO: Add timestamps
+    # model = tf.keras.models.Sequential([
+    #     tf.keras.layers.Conv3D(filters=32, kernel_size=(3, 3, 3), input_shape=(None, 54, 54, 1), padding='same',
+    #            activation='relu'),
+    #     tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
+    #     tf.keras.layers.BatchNormalization(),
+    #     tf.keras.layers.Conv3D(filters=64, kernel_size=(3, 3, 3), padding='same',
+    #            activation='relu'),
+    #     tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
+    #     tf.keras.layers.Conv3D(filters=128, kernel_size=(3, 3, 3), padding='same',
+    #            activation='relu'),
+    #     tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
+    #     tf.keras.layers.BatchNormalization(),
+    #     tf.keras.layers.ConvLSTM2D(filters=256, kernel_size=(2, 2), padding='same',
+    #                return_sequences=False),
+    #
+    #     tf.keras.layers.Flatten(),  # Flatten the output before passing it through Dense layers
+    #     tf.keras.layers.BatchNormalization(),
+    #     tf.keras.layers.Dense(256, activation='relu'),
+    #     tf.keras.layers.Dense(128, activation='relu'),
+    #     tf.keras.layers.Dense(1, activation='sigmoid')  # Output a single node with sigmoid activation for binary classification
+    # ])
 
-    # TODO: Add timestamps
-    model = tf.keras.models.Sequential([
+    image_input = tf.keras.layers.Input(shape=(None, 54, 54, 1))
+    timestamp_input = tf.keras.layers.Input(shape=(None, 2))
+
+    first_part = tf.keras.models.Sequential([
         tf.keras.layers.Conv3D(filters=32, kernel_size=(3, 3, 3), input_shape=(None, 54, 54, 1), padding='same',
-               activation='relu'),
-        tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
+               activation='relu', data_format="channels_last"),
+        tf.keras.layers.LeakyReLU(alpha=0.1),
+        tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
         tf.keras.layers.BatchNormalization(),
         tf.keras.layers.Conv3D(filters=64, kernel_size=(3, 3, 3), padding='same',
-               activation='relu'),
-        tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
+               activation='relu', data_format="channels_last"),
+        tf.keras.layers.LeakyReLU(alpha=0.1),
+        tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
+        tf.keras.layers.BatchNormalization(),
         tf.keras.layers.Conv3D(filters=128, kernel_size=(3, 3, 3), padding='same',
-               activation='relu'),
-        tf.keras.layers.MaxPooling3D(pool_size=(2, 2, 2)),
+               activation='relu', data_format="channels_last"),
+        tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
         tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.ConvLSTM2D(filters=256, kernel_size=(2, 2), padding='same',
-                   return_sequences=False),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Flatten(),  # Flatten the output before passing it through Dense layers
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dense(1, activation='sigmoid')  # Output a single node with sigmoid activation for binary classification
+        # tf.keras.layers.ConvLSTM2D(filters=256, kernel_size=(2, 2), padding='same',
+        #            return_sequences=True),
+
+        # tf.keras.layers.Flatten(),  # Flatten the output before passing it through Dense layers
+        tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten()),  # Flatten the output before passing it through Dense layers
+        # tf.keras.layers.BatchNormalization(),
+        # tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(54, 54, 1)),
+        # tf.keras.layers.MaxPooling2D((2, 2)),
+        # tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+        # tf.keras.layers.MaxPooling2D((2, 2)),
+        #
+        # tf.keras.layers.Conv2D(128, (3, 3), activation='relu'),
+        # tf.keras.layers.MaxPooling2D((2, 2)),
+        #
+        # tf.keras.layers.Flatten(),
+        # tf.keras.layers.BatchNormalization(),
     ])
+
+    second_part = tf.keras.models.Sequential([
+        # tf.keras.layers.LSTM(256, return_sequences=True),
+        # tf.keras.layers.LSTM(128, return_sequences=False),
+        tf.keras.layers.LSTM(256, return_sequences=False),
+        tf.keras.layers.Dense(128, activation='relu'),
+        tf.keras.layers.Dense(32, activation='relu'),
+        tf.keras.layers.Dense(1, activation='sigmoid')
+    ])
+    image_features = first_part(image_input)
+    combined_features = tf.keras.layers.Concatenate()([image_features, timestamp_input])
+    output = second_part(combined_features)
+    model = tf.keras.models.Model(inputs=[image_input, timestamp_input], outputs=output)
+
+    print(first_part.summary())
+    print(second_part.summary())
+
 
     return model
 
@@ -84,17 +139,17 @@ if __name__ == '__main__':
 
     # Load model
     model = tf.keras.models.load_model(
-        'model20.h5'
+        'model22.h5'
     )
 
     print(model.summary())
     source_data = SourceData(
         [
-            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-            # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+            'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
          ],
         samples_folder='C:\\git\\object_recognition\\star_samples')
@@ -107,10 +162,10 @@ if __name__ == '__main__':
         model.fit(
             training_generator,
             validation_data=val_generator,
-            steps_per_epoch=2000,
-            validation_steps=200,
-            epochs=5,
+            steps_per_epoch=3000,
+            validation_steps=500,
+            epochs=10,
         )
     except KeyboardInterrupt:
-        model.save("model20.h5")
-    model.save("model20.h5")
+        model.save("model22.h5")
+    model.save("model22.h5")

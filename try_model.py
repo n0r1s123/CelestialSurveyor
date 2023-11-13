@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import numpy as np
 from PIL import Image
+import cv2
 
 
 
@@ -66,7 +67,7 @@ if __name__ == '__main__':
         imgplot = ax.imshow(max_image, cmap='gray')
 
         model = tf.keras.models.load_model(
-            'model20.h5'
+            'model22.h5'
         )
         coords = np.array([np.array([y, x]) for y in ys for x in xs])
         number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
@@ -74,14 +75,22 @@ if __name__ == '__main__':
         total_len = len(coord_batches)
         progress_bar = tqdm.tqdm(total=total_len)
         objects_coords = []
+        ts_diff = dataset.source_data.diff_timestamps[num]
+        ts_norm = dataset.source_data.normalized_timestamps[num][1:]
+        ts = np.array(list(zip(ts_diff, ts_norm)))
+
         for coord_batch in coord_batches:
             imgs_batch = []
+            ts_pred = []
             for y, x in coord_batch:
                 shrinked = dataset.get_shrinked_img_series(54, y, x, imgs)
                 shrinked = dataset.prepare_images(shrinked)
                 imgs_batch.append(shrinked)
+                ts_pred.append(ts)
+
             imgs_batch = np.array(imgs_batch)
-            results = model.predict(imgs_batch, verbose=0)
+            # ts_batch = dataset.source_data.diff_timestamps[num]
+            results = model.predict([imgs_batch, np.array(ts_pred)], verbose=0)
             for res, (y, x) in zip(results, coord_batch):
                 if res > 0.8:
                     objects_coords.append((y, x))
@@ -110,7 +119,13 @@ if __name__ == '__main__':
 
                 frames = dataset.get_shrinked_img_series(54 * gif_size, y_new, x_new, imgs)
                 frames = frames * 256
-                frames = [Image.fromarray(frame).convert('L').convert('P') for frame in frames]
-                frames[0].save(f"{num}_{len(processed)}.gif", save_all=True, append_images=frames[1:], duration=200, loop=0)
+                new_shape = list(frames.shape)
+                new_shape[1] += 20
+                new_frames = np.zeros(new_shape)
+                new_frames[:, :-20, :] = frames
+                for frame, original_ts in zip(new_frames, dataset.source_data.timestamps[num]):
+                    cv2.putText(frame, text=original_ts.strftime("%d/%m/%Y %H:%M:%S %Z"), org=(120, 54*gif_size + 16), fontFace=1, fontScale=1, color=(255,255,255), thickness=0)
+                new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in new_frames]
+                new_frames[0].save(f"{num}_{len(processed)}.gif", save_all=True, append_images=new_frames[1:], duration=200, loop=0)
 
         plt.show()
