@@ -31,7 +31,29 @@ def get_big_rectangle_coords(y, x, image_shape, gif_size):
     return box_y, box_x, size * gif_size
 
 
-if __name__ == '__main__':
+def confirm_prediction(model, dataset, y, x, dataset_num):
+    movement = 5  # pixels
+    directions = (-2, -1, 0, 1, 2)
+    coords = np.array([[y + dir_y * movement, x + dir_x * movement] for dir_y in directions for dir_x in directions])
+    imgs_batch = []
+    ts_pred = []
+    ts_diff = dataset.source_data.diff_timestamps[dataset_num]
+    ts_norm = dataset.source_data.normalized_timestamps[dataset_num][1:]
+    ts = np.array(list(zip(ts_diff, ts_norm)))
+    for y, x in coords:
+        shrinked = dataset.get_shrinked_img_series(54, y, x, dataset_idx=dataset_num)
+        shrinked = dataset.prepare_images(shrinked)
+        imgs_batch.append(shrinked)
+        ts_pred.append(ts)
+    imgs_batch = np.array(imgs_batch)
+    results = model.predict([imgs_batch, np.array(ts_pred)], verbose=0)
+    # print(results)
+    number_of_found_objects = (results > 0.80).sum()
+    print(number_of_found_objects)
+    return number_of_found_objects > 2
+
+
+def main():
     batch_size = 20
     source_data = SourceData(
         [
@@ -39,17 +61,17 @@ if __name__ == '__main__':
             # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
         ],
         'C:\\git\\object_recognition\\star_samples')
     dataset = Dataset(source_data)
     for num, imgs in enumerate(dataset.source_data.raw_dataset):
         print(f"Processing object number {num} of {len(dataset.source_data.raw_dataset)}")
-    # imgs = dataset.source_data.raw_dataset[0]
+        # imgs = dataset.source_data.raw_dataset[0]
         # for _ in range(5):
         #     imgs, _ = dataset.draw_object_on_image_series_numpy(imgs)
 
@@ -70,7 +92,7 @@ if __name__ == '__main__':
         imgplot = ax.imshow(max_image, cmap='gray')
 
         model = tf.keras.models.load_model(
-            'model23.h5'
+            'model24.h5'
         )
         coords = np.array([np.array([y, x]) for y in ys for x in xs])
         number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
@@ -102,8 +124,10 @@ if __name__ == '__main__':
         gif_size = 7
         processed = []
         for coord_num, (y, x) in enumerate(objects_coords):
+            confirmed = confirm_prediction(model, dataset=dataset, y=y, x=x, dataset_num=num)
+            color = 'green' if confirmed else 'yellow'
             plt.gca().add_patch(Rectangle((x, y), 54, 54,
-                                          edgecolor='green',
+                                          edgecolor=color,
                                           facecolor='none',
                                           lw=4))
             draw = False
@@ -127,8 +151,14 @@ if __name__ == '__main__':
                 new_frames = np.zeros(new_shape)
                 new_frames[:, :-20, :] = frames
                 for frame, original_ts in zip(new_frames, dataset.source_data.timestamps[num]):
-                    cv2.putText(frame, text=original_ts.strftime("%d/%m/%Y %H:%M:%S %Z"), org=(120, 54*gif_size + 16), fontFace=1, fontScale=1, color=(255,255,255), thickness=0)
+                    cv2.putText(frame, text=original_ts.strftime("%d/%m/%Y %H:%M:%S %Z"), org=(120, 54 * gif_size + 16),
+                                fontFace=1, fontScale=1, color=(255, 255, 255), thickness=0)
                 new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in new_frames]
-                new_frames[0].save(f"{num}_{len(processed)}.gif", save_all=True, append_images=new_frames[1:], duration=200, loop=0)
+                new_frames[0].save(f"{num}_{len(processed)}.gif", save_all=True, append_images=new_frames[1:],
+                                   duration=200, loop=0)
 
         plt.show()
+
+
+if __name__ == '__main__':
+    main()

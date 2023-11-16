@@ -61,16 +61,16 @@ if __name__ == '__main__':
 
     # Load model
     model = tf.keras.models.load_model(
-        'model23.h5'
+        'model24.h5'
     )
 
     print(model.summary())
     source_data = SourceData(
         [
-            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
@@ -92,5 +92,5 @@ if __name__ == '__main__':
             epochs=3,
         )
     except KeyboardInterrupt:
-        model.save("model24.h5")
-    model.save("model24.h5")
+        model.save("model25.h5")
+    model.save("model25.h5")
