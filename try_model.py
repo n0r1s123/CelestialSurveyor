@@ -35,12 +35,15 @@ if __name__ == '__main__':
     batch_size = 20
     source_data = SourceData(
         [
-            'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-            'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
+            # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
         ],
         'C:\\git\\object_recognition\\star_samples')
     dataset = Dataset(source_data)
@@ -67,7 +70,7 @@ if __name__ == '__main__':
         imgplot = ax.imshow(max_image, cmap='gray')
 
         model = tf.keras.models.load_model(
-            'model22.h5'
+            'model23.h5'
         )
         coords = np.array([np.array([y, x]) for y in ys for x in xs])
         number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)

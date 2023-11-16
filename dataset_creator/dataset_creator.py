@@ -418,7 +418,7 @@ class Dataset:
 
     def draw_hot_pixels(self, imgs):
         # number_of_affected_images = random.randrange(len(imgs)//2, len(imgs) + 1)
-        probablity = 50
+        probablity = 10
         result = []
         for img in imgs:
             if random.randrange(1, 101) < probablity:
@@ -498,7 +498,7 @@ class Dataset:
     def make_series(self, dataset_idx=0):
 
         imgs = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
-        if random.randint(1, 101) > 50:
+        if random.randint(1, 101) > 90:
             imgs, drawn = self.draw_object_on_image_series_numpy(imgs, dataset_idx=dataset_idx)
             res = drawn
             # res = 1
@@ -542,6 +542,6 @@ if __name__ == '__main__':
     #     img_num=15
     # )
     Dataset.crop_folder(
-        input_folder='C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\Pix\\registered\\Light_BIN-1_4944x3284_EXPOSURE-120.00s_FILTER-NoFilter_RGB\\',
-        output_folder='C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
+        input_folder='C:\\Users\\bsolomin\\Astro\\M81\\Pix\\registered\\Light_BIN-1_4944x3284_EXPOSURE-120.00s_FILTER-NoFilter_RGB\\',
+        output_folder='C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
     )
