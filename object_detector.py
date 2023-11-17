@@ -1,6 +1,7 @@
 import os
 import tensorflow as tf
 from dataset_creator.dataset_creator import SourceData, Dataset
+from cryptography.fernet import Fernet
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
@@ -46,13 +47,33 @@ def build_rnn_model(input_shape):
     print(first_part.summary())
     print(second_part.summary())
 
+    return model.save()
 
-    return model
+
+# Encrypt the model weights
+def encrypt_model(model_name, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw='):
+    # Read the entire model file
+    with open(f"{model_name}.h5", "rb") as file:
+        model_bytes = file.read()
+
+    # Use the provided key to create a cipher
+    cipher = Fernet(key)
+
+    # Encrypt the entire model
+    encrypted_model = cipher.encrypt(model_bytes)
+
+    # Save the encrypted weights to a file
+    with open(f"{model_name}.bin", "wb") as file:
+        file.write(encrypted_model)
 
 
-if __name__ == '__main__':
+def main():
     print(tf.__version__)
     input_shape = (None, 54, 54, 1)
+    load_model_name = "model24"
+    save_model_name = "model25"
+
+
     # Build the model
 
     # Compile the model
@@ -61,22 +82,22 @@ if __name__ == '__main__':
 
     # Load model
     model = tf.keras.models.load_model(
-        'model24.h5'
+        f'{load_model_name}.h5'
     )
 
     print(model.summary())
     source_data = SourceData(
         [
-            'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
-         ],
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
+        ],
         samples_folder='C:\\git\\object_recognition\\star_samples')
 
     dataset = Dataset(source_data)
@@ -87,10 +108,18 @@ if __name__ == '__main__':
         model.fit(
             training_generator,
             validation_data=val_generator,
-            steps_per_epoch=3000,
-            validation_steps=500,
+            steps_per_epoch=200,
+            validation_steps=50,
             epochs=3,
         )
     except KeyboardInterrupt:
-        model.save("model25.h5")
-    model.save("model25.h5")
+        model.save(f"{save_model_name}.h5")
+        encrypt_model(save_model_name)
+
+    model.save(f"{save_model_name}.h5")
+    encrypt_model(save_model_name)
+
+
+if __name__ == '__main__':
+    main()
+

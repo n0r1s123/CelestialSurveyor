@@ -14,6 +14,9 @@ from matplotlib.patches import Rectangle
 import numpy as np
 from PIL import Image
 import cv2
+from cryptography.fernet import Fernet
+from io import BytesIO
+import h5py
 
 
 
@@ -53,6 +56,26 @@ def confirm_prediction(model, dataset, y, x, dataset_num):
     return number_of_found_objects > 2
 
 
+# Decrypt the model weights
+def decrypt_model(encrypted_model_path, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw='):
+    # Read the encrypted weights from the file
+    with open(encrypted_model_path, "rb") as file:
+        encrypted_model_data = file.read()
+
+    # Use the provided key to create a cipher
+    cipher = Fernet(key)
+
+    # Decrypt the entire model
+    decrypted_model_data = cipher.decrypt(encrypted_model_data)
+
+    # Load the decrypted model directly into memory
+    decrypted_model_data = BytesIO(decrypted_model_data)
+    h = h5py.File(decrypted_model_data, 'r')
+    loaded_model = tf.keras.models.load_model(h)
+
+    return loaded_model
+
+
 def main():
     batch_size = 20
     source_data = SourceData(
@@ -60,9 +83,9 @@ def main():
             # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
@@ -91,9 +114,7 @@ def main():
 
         imgplot = ax.imshow(max_image, cmap='gray')
 
-        model = tf.keras.models.load_model(
-            'model24.h5'
-        )
+        model = decrypt_model("model25.bin")
         coords = np.array([np.array([y, x]) for y in ys for x in xs])
         number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
         coord_batches = np.array_split(coords, number_of_batches, axis=0)
