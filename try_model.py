@@ -7,6 +7,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tqdm
 from dataset_creator.dataset_creator import Dataset, SourceData
 import tensorflow as tf
+tf.get_logger().setLevel('FATAL')
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
@@ -17,15 +18,12 @@ import cv2
 from cryptography.fernet import Fernet
 from io import BytesIO
 import h5py
-
-
+import argparse
 
 
 
 def get_big_rectangle_coords(y, x, image_shape, gif_size):
     size = 54
-    # gif_size = 7  # times of size. Need to use odd numbers
-
     box_x = 0 if x - size * (gif_size//2) < 0 else x - size * (gif_size//2)
     box_y = 0 if y - size * (gif_size//2) < 0 else y - size * (gif_size//2)
     image_size_y, image_size_x = image_shape[:2]
@@ -50,9 +48,7 @@ def confirm_prediction(model, dataset, y, x, dataset_num):
         ts_pred.append(ts)
     imgs_batch = np.array(imgs_batch)
     results = model.predict([imgs_batch, np.array(ts_pred)], verbose=0)
-    # print(results)
     number_of_found_objects = (results > 0.80).sum()
-    print(number_of_found_objects)
     return number_of_found_objects > 2
 
 
@@ -76,14 +72,20 @@ def decrypt_model(encrypted_model_path, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl
     return loaded_model
 
 
-def main():
+def main(source_folder, output_folder, hide_unconfirmed):
+    if not os.path.exists(source_folder):
+        raise ValueError(f"Path '{source_folder}' doesn't exist. Please check the path specified")
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
     batch_size = 20
     source_data = SourceData(
         [
+            source_folder,
             # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
@@ -93,7 +95,7 @@ def main():
         'C:\\git\\object_recognition\\star_samples')
     dataset = Dataset(source_data)
     for num, imgs in enumerate(dataset.source_data.raw_dataset):
-        print(f"Processing object number {num} of {len(dataset.source_data.raw_dataset)}")
+        print(f"Processing object number {num+1} of {len(dataset.source_data.raw_dataset)}")
         # imgs = dataset.source_data.raw_dataset[0]
         # for _ in range(5):
         #     imgs, _ = dataset.draw_object_on_image_series_numpy(imgs)
@@ -146,6 +148,8 @@ def main():
         processed = []
         for coord_num, (y, x) in enumerate(objects_coords):
             confirmed = confirm_prediction(model, dataset=dataset, y=y, x=x, dataset_num=num)
+            if hide_unconfirmed and not confirmed:
+                continue
             color = 'green' if confirmed else 'yellow'
             plt.gca().add_patch(Rectangle((x, y), 54, 54,
                                           edgecolor=color,
@@ -175,11 +179,30 @@ def main():
                     cv2.putText(frame, text=original_ts.strftime("%d/%m/%Y %H:%M:%S %Z"), org=(120, 54 * gif_size + 16),
                                 fontFace=1, fontScale=1, color=(255, 255, 255), thickness=0)
                 new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in new_frames]
-                new_frames[0].save(f"{num}_{len(processed)}.gif", save_all=True, append_images=new_frames[1:],
-                                   duration=200, loop=0)
+                new_frames[0].save(
+                    os.path.join(output_folder, f"{num}_{len(processed)}.gif"),
+                    save_all=True,
+                    append_images=new_frames[1:],
+                    duration=200,
+                    loop=0)
 
-        plt.show()
+        plt.savefig(os.path.join(output_folder, f"results.png"))
 
 
 if __name__ == '__main__':
-    main()
+    arg_parser = argparse.ArgumentParser(
+        prog='CelestialSurveyor',
+        description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '
+                    'locating asteroids and comets within the vastness of the cosmic terrain')
+    arg_parser.add_argument('-s', '--source_folder', dest='source_folder', type=str,
+                            help='Path to the folder with xisf files to be analyzed')
+    arg_parser.add_argument('-o', '--output_folder', dest='output_folder', type=str,
+                            help='Path to the folder where results will be stored')
+    arg_parser.add_argument('-u', '--hide_unconfirmed', dest='hide_unconfirmed', action="store_true",
+                            help='Path to the folder where results will be stored')
+    provided_args = arg_parser.parse_args()
+    main(
+        source_folder=provided_args.source_folder,
+        output_folder=provided_args.output_folder,
+        hide_unconfirmed=provided_args.hide_unconfirmed,
+    )

@@ -20,13 +20,13 @@ class SourceData:
         self.normalized_timestamps = [np.array(
             [item / max(timestamps) for item in timestamps]) for timestamps in normalized_timestamps]
         diff_timestamps = [np.array([(timestamps[i] - timestamps[i-1]).total_seconds() for i in range(1, len(timestamps))]) for timestamps in self.timestamps]
-        print(diff_timestamps)
         self.diff_timestamps = [(diffs - np.min(diffs)) / (np.max(diffs) - np.min(diffs)) for diffs in diff_timestamps]
         # for diffs in diff_timestamps:
         #     (diffs - np.min(diffs)) / (np.max(diffs) - np.min(diffs))
-        self.object_samples = self.__load_samples(samples_folder)
-
-        print(self.exclusion_boxes)
+        if samples_folder is not None and os.path.exists(samples_folder):
+            self.object_samples = self.__load_samples(samples_folder)
+        else:
+            self.object_samples = []
 
     @classmethod
     def __load_raw_dataset(cls, folders):
@@ -41,7 +41,6 @@ class SourceData:
             exposures = []
             for num, item in enumerate(file_list, start=1):
                 img_meta = XISF(item).get_images_metadata()[0]
-                # print(json.dumps(img_meta["FITSKeywords"], indent=4))
                 exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
                 timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
                 timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
@@ -55,10 +54,10 @@ class SourceData:
             all_exposures.append(exposures)
             img_shapes.append(img_shape)
         print("Raw image dataset loaded:")
-        print(f"LEN: {len(raw_dataset)}")
+        # print(f"NUMBER OF IMAGES: {len(raw_dataset)}")
         print(f"SHAPE: {[item.shape for item in raw_dataset]}")
-        print(f"Memory: {sum([item.itemsize * item.size for item in raw_dataset]) // (1024 * 1024)} Mb")
-        print(f"Timestamps: {[len(item) for item in all_timestamps]}")
+        print(f"Used RAM: {sum([item.itemsize * item.size for item in raw_dataset]) // (1024 * 1024)} Mb")
+        # print(f"Timestamps: {[len(item) for item in all_timestamps]}")
 
         return raw_dataset, all_exposures, all_timestamps, img_shapes, all_exclusion_boxes
 
@@ -197,8 +196,8 @@ class Dataset:
 
     @classmethod
     def crop_folder(cls, input_folder, output_folder):
-        # if not os.path.exists(output_folder):
-        #     pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
         file_list = [item for item in os.listdir(input_folder) if "c_d_r.xisf" in item]
         timestamped_file_list = []
         for item in file_list:
@@ -239,8 +238,8 @@ class Dataset:
 
     @classmethod
     def crop_folder_some_from_date(cls, input_folder, output_folder, img_num=10):
-        # if not os.path.exists(output_folder):
-        #     pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
         file_list = [item for item in os.listdir(input_folder) if "c_d_r.xisf" in item]
         timestamped_file_list = []
         for item in file_list:
