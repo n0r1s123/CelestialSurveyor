@@ -6,7 +6,6 @@ import random
 
 import cv2
 import numpy as np
-import pathlib
 
 from auto_stretch.stretch import Stretch
 from xisf import XISF
@@ -198,8 +197,8 @@ class Dataset:
 
     @classmethod
     def crop_folder(cls, input_folder, output_folder):
-        if not os.path.exists(output_folder):
-            pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
+        # if not os.path.exists(output_folder):
+        #     pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
         file_list = [item for item in os.listdir(input_folder) if "c_d_r.xisf" in item]
         timestamped_file_list = []
         for item in file_list:
@@ -240,8 +239,8 @@ class Dataset:
 
     @classmethod
     def crop_folder_some_from_date(cls, input_folder, output_folder, img_num=10):
-        if not os.path.exists(output_folder):
-            pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
+        # if not os.path.exists(output_folder):
+        #     pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
         file_list = [item for item in os.listdir(input_folder) if "c_d_r.xisf" in item]
         timestamped_file_list = []
         for item in file_list:
