@@ -3,9 +3,11 @@ import json
 import os
 import pytz
 import random
+import time
 
 import cv2
 import numpy as np
+import tqdm
 
 from auto_stretch.stretch import Stretch
 from xisf import XISF
@@ -14,8 +16,8 @@ from bs4 import BeautifulSoup
 
 
 class SourceData:
-    def __init__(self, folders=None, samples_folder=None):
-        self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = self.__load_raw_dataset(folders)
+    def __init__(self, folders=None, samples_folder=None, non_linear=False):
+        self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = self.__load_raw_dataset(folders, non_linear)
         normalized_timestamps = [[(item - min(timestamps)).total_seconds() for item in timestamps] for timestamps in self.timestamps]
         self.normalized_timestamps = [np.array(
             [item / max(timestamps) for item in timestamps]) for timestamps in normalized_timestamps]
@@ -29,35 +31,25 @@ class SourceData:
             self.object_samples = []
 
     @classmethod
-    def __load_raw_dataset(cls, folders):
-        raw_dataset = [np.array([np.array(XISF(item).read_image(0)[:, :, 0]) for item in [os.path.join(folder, file_name) for file_name in os.listdir(folder) if file_name.endswith('.xisf')]]) for folder in folders]
-        all_timestamps = []
-        all_exposures = []
+    def __load_raw_dataset(cls, folders, non_linear=False):
+
+        # raw_dataset = [np.array([np.array(XISF(item).read_image(0)[:, :, 0]) for item in [os.path.join(folder, file_name) for file_name in os.listdir(folder) if file_name.endswith('.xisf')]]) for folder in folders]
+
+        raw_dataset = [cls.crop_folder_on_the_fly(folder, non_linear) for folder in folders]
+        all_timestamps = [item[1] for item in raw_dataset]
+        all_exposures = [item[2] for item in raw_dataset]
+        raw_dataset = [item[0] for item in raw_dataset]
         all_exclusion_boxes = []
         img_shapes = []
         for num1, folder in enumerate(folders):
-            file_list = [os.path.join(folder, item) for item in os.listdir(folder) if item.endswith('.xisf')]
-            timestamps = []
-            exposures = []
-            for num, item in enumerate(file_list, start=1):
-                img_meta = XISF(item).get_images_metadata()[0]
-                exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
-                timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
-                timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
-                timestamp.replace(tzinfo=pytz.UTC)
-                exposures.append(exposure)
-                timestamps.append(timestamp)
             img_shape = raw_dataset[num1].shape[1:]
             exclusion_boxes = cls.__load_exclusion_boxes(folder, img_shape)
             all_exclusion_boxes.append(exclusion_boxes)
-            all_timestamps.append(timestamps)
-            all_exposures.append(exposures)
             img_shapes.append(img_shape)
-        print("Raw image dataset loaded:")
-        # print(f"NUMBER OF IMAGES: {len(raw_dataset)}")
+
+        print("Raw image data loaded:")
         print(f"SHAPE: {[item.shape for item in raw_dataset]}")
         print(f"Used RAM: {sum([item.itemsize * item.size for item in raw_dataset]) // (1024 * 1024)} Mb")
-        # print(f"Timestamps: {[len(item) for item in all_timestamps]}")
 
         return raw_dataset, all_exposures, all_timestamps, img_shapes, all_exclusion_boxes
 
@@ -98,6 +90,55 @@ class SourceData:
 
         return boxes
 
+    @classmethod
+    def crop_folder_on_the_fly(cls, input_folder, non_linear):
+        file_list = [item for item in os.listdir(input_folder) if ".xisf" in item]
+        timestamped_file_list = []
+        for item in file_list:
+            fp = os.path.join(input_folder, item)
+            xisf = XISF(fp)
+            img_meta = xisf.get_images_metadata()[0]
+            timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
+            timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
+            exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
+            timestamped_file_list.append((fp, timestamp, exposure))
+        timestamped_file_list.sort(key=lambda x: x[1])
+
+        boarders = np.array([])
+        timestamps = []
+        imgs = []
+        exposures = []
+        print("Loading images...")
+        time.sleep(0.1)
+        progress_bar = tqdm.tqdm(total=len(timestamped_file_list))
+        for fp, timestamp, exposure in timestamped_file_list:
+            timestamps.append(timestamp)
+            exposures.append(exposure)
+            xisf = XISF(fp)
+            img_data = xisf.read_image(0)
+            img_data = np.array(img_data)
+            if img_data.shape[-1] == 3:
+                img_data = Dataset.to_gray(img_data)
+
+            img_data.shape = *img_data.shape[:2],
+            if not non_linear:
+                img_data = Dataset.stretch_image(img_data)
+            img_data = img_data.astype('float32')
+            imgs.append(img_data)
+            y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
+
+            y_boarders, x_boarders = Dataset.crop_fine(
+                img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
+            boarders = np.append(boarders, np.array([*y_boarders, *x_boarders]))
+            progress_bar.update()
+        y_boarders = int(np.max(boarders[::4])), int(np.min(boarders[1::4]))
+        x_boarders = int(np.max(boarders[2::4])), int(np.min(boarders[3::4]))
+        x_left, x_right = x_boarders
+        y_top, y_bottom = y_boarders
+        imgs = np.array(imgs)
+        imgs = imgs[:, y_top: y_bottom, x_left: x_right]
+        return imgs, timestamps, exposures
+
 
 class Dataset:
     ZERO_TOLERANCE = 100
@@ -122,7 +163,7 @@ class Dataset:
     @classmethod
     def crop_raw(cls, img_data, to_do=True):
         y_top = x_left = 0
-        y_bottom, x_right = img_data.shape
+        y_bottom, x_right = img_data.shape[:2]
         for num, line in enumerate(img_data):
             if line[-1] != 0 or line[0] != 0:
                 y_top = num
@@ -154,10 +195,24 @@ class Dataset:
             y_pre_crop_boarders, _ = img_data.shape
 
         pre_cropped = img_data[slice(*y_pre_crop_boarders), slice(*x_pre_crop_boarders)]
-        y_top_zeros = np.count_nonzero(pre_cropped[0] == 0)
-        y_bottom_zeros = np.count_nonzero(pre_cropped[-1] == 0)
-        x_left_zeros = np.count_nonzero(pre_cropped.T[0] == 0)
-        x_right_zeros = np.count_nonzero(pre_cropped.T[-1] == 0)
+        def get_num_of_corner_zeros(line):
+            zeros_num = 0
+            for item in line:
+                if item == 0:
+                    zeros_num += 1
+                else:
+                    break
+            for item in line[::-1]:
+                if item == 0:
+                    zeros_num += 1
+                else:
+                    break
+            return zeros_num
+
+        y_top_zeros = get_num_of_corner_zeros(pre_cropped[0])
+        y_bottom_zeros = get_num_of_corner_zeros(pre_cropped[-1])
+        x_left_zeros = get_num_of_corner_zeros(pre_cropped.T[0])
+        x_right_zeros = get_num_of_corner_zeros(pre_cropped.T[-1])
         zeros = y_top_zeros, y_bottom_zeros, x_left_zeros, x_right_zeros
         trim_args = (1, False), (-1, False), (1, True), (-1, True)
         args_order = (item[1] for item in sorted(zip(zeros, trim_args), key=lambda x: x[0], reverse=True))
@@ -167,8 +222,7 @@ class Dataset:
                 img_data_tmp = img_data_tmp.T
             x = 0
             for num, line in enumerate(img_data_tmp[::direction]):
-                if np.count_nonzero(line == 0) <= np.count_nonzero(
-                        img_data_tmp[::direction][num + 1] == 0) and np.count_nonzero(line == 0) < cls.ZERO_TOLERANCE:
+                if get_num_of_corner_zeros(line) <= get_num_of_corner_zeros(img_data_tmp[::direction][num + 1]) and get_num_of_corner_zeros(line) < cls.ZERO_TOLERANCE:
                     x = num
                     break
             if direction == -1:
@@ -299,7 +353,7 @@ class Dataset:
         return shrinked
 
     def get_random_shrink(self, dataset_idx=0):
-        size = 54
+        size = 64
         exclusion_boxes = self.source_data.exclusion_boxes[dataset_idx]
         generated = False
 
@@ -428,6 +482,41 @@ class Dataset:
         result = np.array(result)
         return result
 
+    def draw_variable_star(self, imgs, dataset_idx):
+        old_images = np.copy(imgs)
+        timestamps = [0.] + [(item - self.source_data.timestamps[dataset_idx][0]).total_seconds() for num, item in enumerate(self.source_data.timestamps[dataset_idx][1:])]
+        period = 1.5 * timestamps[-1]
+        # period = (random.randrange(500, 1000) / 500) * timestamps[-1]
+        max_brightness = random.randrange(80, 101) / 100
+        min_brightness = max_brightness - random.randrange(30, 61) / 100
+        starting_phase = (random.randrange(0, 201) / 100) * np.pi
+        y_shape, x_shape = imgs[0].shape[:2]
+        y = random.randint(0, y_shape - 1)
+        x = random.randint(0, x_shape - 1)
+        star_img = random.choice(self.source_data.object_samples)
+        star_brightness = np.max(star_img)
+        # print(period)
+        # print("=" * 60)
+        for num, (img, ts) in enumerate(zip(imgs, timestamps)):
+            new_phaze = 2 * np.pi * ts / period + starting_phase
+            # print(new_phaze/( 2 * np.pi))
+            new_brightness = np.sin(new_phaze) * (max_brightness - min_brightness) / 2 + (max_brightness + min_brightness) / 2
+            # print(new_brightness)
+            # print(ts)
+            brightness_multiplier = new_brightness / star_brightness
+            new_star_image = star_img * brightness_multiplier
+            new_img = self.calculate_star_form_on_single_image(
+                img, new_star_image, (y, x), (0, 0), 10000)
+            imgs[num] = new_img
+        # print("=" * 60)
+        drawn = 1
+        if (imgs == old_images).all():
+            drawn = 0
+        return imgs, drawn
+
+
+
+
     def draw_object_on_image_series_numpy(self, imgs, dataset_idx=0):
         drawn = 1
         old_images = np.copy(imgs)
@@ -496,17 +585,24 @@ class Dataset:
     def make_series(self, dataset_idx=0):
 
         imgs = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
-        if random.randint(1, 101) > 90:
-            imgs, drawn = self.draw_object_on_image_series_numpy(imgs, dataset_idx=dataset_idx)
-            res = drawn
+        if random.randint(1, 101) > 60:
+            what_to_draw = random.randrange(0, 100)
+            if what_to_draw < 200:
+                imgs, drawn = self.draw_object_on_image_series_numpy(imgs, dataset_idx=dataset_idx)
+                res = drawn
+            else:
+                imgs, drawn = self.draw_variable_star(imgs, dataset_idx)
+                res = drawn
             # res = 1
         else:
             res = 0
 
+        # if res == 0 and random.randint(1, 101) > 95:
+
         if res == 0:
-            if random.randint(0, 100) >= 90:
+            if random.randint(0, 100) >= 80:
                 imgs = self.draw_one_image_artefact(imgs)
-            if random.randint(0, 100) >= 90:
+            if random.randint(0, 100) >= 80:
                 imgs = self.draw_hot_pixels(imgs)
 
         imgs = self.prepare_images(imgs)

@@ -5,7 +5,7 @@ block_cipher = None
 a = Analysis(
     ['try_model.py'],
     pathex=['C:\\git\\object_recognition\\'],
-    binaries=[('.\\model25.bin', '.\\')],
+    binaries=[('.\\model31.bin', '.\\')],
     datas=[],
     hiddenimports=[],
     hookspath=[],
@@ -24,7 +24,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='object_founder',
+    name='CelestialSurveyor',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -44,5 +44,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='object_founder',
+    name='CelestialSurveyor',
 )

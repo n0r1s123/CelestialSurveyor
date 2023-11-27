@@ -9,11 +9,11 @@ os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 # Define your RNN model
 def build_rnn_model(input_shape):
-    image_input = tf.keras.layers.Input(shape=(None, 54, 54, 1))
+    image_input = tf.keras.layers.Input(shape=(None, 64, 64, 1))
     timestamp_input = tf.keras.layers.Input(shape=(None, 2))
 
     first_part = tf.keras.models.Sequential([
-        tf.keras.layers.Conv3D(filters=32, kernel_size=(3, 3, 3), input_shape=(None, 54, 54, 1), padding='same',
+        tf.keras.layers.Conv3D(filters=32, kernel_size=(3, 3, 3), input_shape=(None, 64, 64, 1), padding='same',
                data_format="channels_last"),
         tf.keras.layers.LeakyReLU(alpha=0.1),
         tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
@@ -32,7 +32,8 @@ def build_rnn_model(input_shape):
     ])
 
     second_part = tf.keras.models.Sequential([
-        tf.keras.layers.LSTM(256, return_sequences=False),
+        tf.keras.layers.LSTM(256, return_sequences=True),
+        tf.keras.layers.LSTM(128, return_sequences=False),
         tf.keras.layers.Dense(128),
         tf.keras.layers.LeakyReLU(alpha=0.1),
         tf.keras.layers.Dense(64),
@@ -47,7 +48,7 @@ def build_rnn_model(input_shape):
     print(first_part.summary())
     print(second_part.summary())
 
-    return model.save()
+    return model
 
 
 # Encrypt the model weights
@@ -69,9 +70,9 @@ def encrypt_model(model_name, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw=
 
 def main():
     print(tf.__version__)
-    input_shape = (None, 54, 54, 1)
-    load_model_name = "model24"
-    save_model_name = "model25"
+    input_shape = (None, 64, 64, 1)
+    load_model_name = "model31"
+    save_model_name = "model32"
 
 
     # Build the model
@@ -88,29 +89,44 @@ def main():
     print(model.summary())
     source_data = SourceData(
         [
-            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
             'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
+            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
+            # 'D:\\Boris\\astro\\M31_2\\Pix\\registered\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB',
         ],
-        samples_folder='C:\\git\\object_recognition\\star_samples')
+        samples_folder='C:\\git\\object_recognition\\star_samples',
+        non_linear=True
+    )
 
     dataset = Dataset(source_data)
 
     training_generator = dataset.batch_generator(batch_size=10)
     val_generator = dataset.batch_generator(batch_size=10)
+
+    early_stopping_monitor = tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss',
+        min_delta=0,
+        patience=4,
+        verbose=1,
+        mode='min',
+        baseline=None,
+        restore_best_weights=True
+    )
+
     try:
         model.fit(
             training_generator,
             validation_data=val_generator,
-            steps_per_epoch=200,
-            validation_steps=50,
-            epochs=3,
+            steps_per_epoch=5000,
+            validation_steps=4000,
+            epochs=20,
+            callbacks=[early_stopping_monitor]
         )
     except KeyboardInterrupt:
         model.save(f"{save_model_name}.h5")
