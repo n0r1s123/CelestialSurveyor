@@ -118,7 +118,7 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
             # # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
@@ -231,6 +231,7 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
 
 
 if __name__ == '__main__':
+    version = "0.1.2"
     arg_parser = argparse.ArgumentParser(
         prog='CelestialSurveyor',
         description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '
@@ -245,11 +246,16 @@ if __name__ == '__main__':
                             help='Path to the folder where results will be stored')
     arg_parser.add_argument('-n', '--non_linear', dest='non_linear', action="store_true",
                             help='Provide this key if the images are not in linear state')
+    arg_parser.add_argument('-v', '--version', dest='version', action="store_true",
+                            help='Display version of this app.')
     provided_args = arg_parser.parse_args()
-    main(
-        source_folder=provided_args.source_folder,
-        output_folder=provided_args.output_folder,
-        model_path=provided_args.model_path,
-        hide_unconfirmed=provided_args.hide_unconfirmed,
-        non_linear=provided_args.non_linear,
-    )
+    if provided_args.version:
+        print(f"CelestialSurveyor v{version}")
+    else:
+        main(
+            source_folder=provided_args.source_folder,
+            output_folder=provided_args.output_folder,
+            model_path=provided_args.model_path,
+            hide_unconfirmed=provided_args.hide_unconfirmed,
+            non_linear=provided_args.non_linear,
+        )

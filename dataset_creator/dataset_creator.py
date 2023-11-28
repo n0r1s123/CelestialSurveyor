@@ -1,6 +1,8 @@
 import datetime
 import json
 import os
+import re
+
 import pytz
 import random
 import time
@@ -99,7 +101,15 @@ class SourceData:
             xisf = XISF(fp)
             img_meta = xisf.get_images_metadata()[0]
             timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
-            timestamp = datetime.datetime.strptime(timestamp.replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
+            datetime_reg = re.compile("(\d{4}-\d{2}-\d{2}).*(\d{2}:\d{2}:\d{2})")
+            match = datetime_reg.match(timestamp)
+            date_part = match.group(1)
+            time_part = match.group(2)
+            year, month, day = date_part.split("-")
+            year, month, day = int(year), int(month), int(day)
+            hour, minute, second = time_part.split(":")
+            hour, minute, second = int(hour), int(minute), int(second)
+            timestamp = datetime.datetime(year=year, month=month, day=day, hour=hour, minute=minute, second=second)
             exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
             timestamped_file_list.append((fp, timestamp, exposure))
         timestamped_file_list.sort(key=lambda x: x[1])
@@ -247,6 +257,34 @@ class Dataset:
             return np.array([[result["y_top"], result["y_bottom"]], [result["x_left"], result["x_right"]]]
                             ) + np.array([(y_pre_crop_boarders[0], y_pre_crop_boarders[0]),
                                           (x_pre_crop_boarders[0], x_pre_crop_boarders[0])])
+
+    @classmethod
+    def change_time_format(cls, input_folder, output_folder):
+        file_list = [item for item in os.listdir(input_folder) if ".xisf" in item]
+        for num, item in enumerate(file_list):
+            fp = os.path.join(input_folder, item)
+            xisf = XISF(fp)
+            file_meta = xisf.get_file_metadata()
+            img_meta = xisf.get_images_metadata()
+            img_data = xisf.read_image(0)
+            timestamp = img_meta[0]["FITSKeywords"]["DATE-OBS"][0]['value']
+            img_meta[0]["FITSKeywords"]["DATE-OBS"][0]['value'] = timestamp[:-4]
+            # datetime_reg = re.compile("(\d{4}-\d{2}-\d{2}).*(\d{2}:\d{2}:\d{2})")
+            # match = datetime_reg.match(timestamp[:-4])
+            # date = match.group(1)
+            # time = match.group(2)
+            # year, month, day = date.split("-")
+            # year, month, day = int(year), int(month), int(day)
+            # hour, minute, second = time.split(":")
+            # hour, minute, second = int(hour), int(minute), int(second)
+            # timestamp = datetime.datetime(year=year, month=month, day=day, hour=hour, minute=minute, second=second)
+            # print(timestamp)
+            # timestamp = datetime.datetime.strptime(timestamp[:-4].replace("T", " "), '%Y-%m-%d %H:%M:%S.%f')
+            XISF.write(
+                os.path.join(output_folder, f"image_{num:04}.xisf"), img_data,
+                creator_app="My script v1.0", image_metadata=img_meta[0], xisf_metadata=file_meta,
+                codec='lz4hc', shuffle=True
+            )
 
     @classmethod
     def crop_folder(cls, input_folder, output_folder):
@@ -635,7 +673,7 @@ if __name__ == '__main__':
     #     output_folder='C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
     #     img_num=15
     # )
-    Dataset.crop_folder(
-        input_folder='C:\\Users\\bsolomin\\Astro\\M81\\Pix\\registered\\Light_BIN-1_4944x3284_EXPOSURE-120.00s_FILTER-NoFilter_RGB\\',
-        output_folder='C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
+    Dataset.change_time_format(
+        input_folder='C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
+        output_folder='C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\',
     )
