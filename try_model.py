@@ -231,7 +231,7 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
 
 
 if __name__ == '__main__':
-    version = "0.1.2"
+    version = "0.1.3"
     arg_parser = argparse.ArgumentParser(
         prog='CelestialSurveyor',
         description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '

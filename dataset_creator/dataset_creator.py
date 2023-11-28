@@ -3,6 +3,7 @@ import json
 import os
 import re
 
+import astropy.io.fits
 import pytz
 import random
 import time
@@ -92,55 +93,99 @@ class SourceData:
 
         return boxes
 
+
+    @staticmethod
+    def __get_datetime_from_str(timestamp):
+        datetime_reg = re.compile("(\d{4}-\d{2}-\d{2}).*(\d{2}:\d{2}:\d{2})")
+        match = datetime_reg.match(timestamp)
+        date_part = match.group(1)
+        time_part = match.group(2)
+        year, month, day = date_part.split("-")
+        year, month, day = int(year), int(month), int(day)
+        hour, minute, second = time_part.split(":")
+        hour, minute, second = int(hour), int(minute), int(second)
+        timestamp = datetime.datetime(year=year, month=month, day=day, hour=hour, minute=minute, second=second)
+        return timestamp
+
+    @staticmethod
+    def __process_img_data(img_data, non_linear):
+        if img_data.shape[-1] == 3:
+            img_data = Dataset.to_gray(img_data)
+        img_data.shape = *img_data.shape[:2],
+        if not non_linear:
+            img_data = Dataset.stretch_image(img_data)
+        img_data = img_data.astype('float32')
+        return img_data
+
+    @classmethod
+    def __load_xisf(cls, file_path, non_linear=False, load_image=True):
+        xisf = XISF(file_path)
+        img_meta = xisf.get_images_metadata()[0]
+        timestamp = cls.__get_datetime_from_str(img_meta["FITSKeywords"]["DATE-OBS"][0]['value'])
+        exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
+        if load_image:
+            img_data = xisf.read_image(0)
+            img_data = np.array(img_data)
+            img_data = cls.__process_img_data(img_data, non_linear)
+
+        else:
+            img_data = None
+        return img_data, timestamp, exposure
+
+    @classmethod
+    def __load_fits(cls, file_path, non_linear=False, load_image=True):
+        with astropy.io.fits.open(file_path) as hdul:
+            header = hdul[0].header
+            exposure = float(header['EXPTIME'])
+            timestamp = cls.__get_datetime_from_str(header['DATE-OBS'])
+            if load_image:
+                img_data = hdul[0].data
+                img_data = cls.__process_img_data(img_data, non_linear)
+            else:
+                img_data = None
+        return img_data, timestamp, exposure
+
     @classmethod
     def crop_folder_on_the_fly(cls, input_folder, non_linear):
-        file_list = [item for item in os.listdir(input_folder) if ".xisf" in item]
+        file_list = [item for item in os.listdir(input_folder) if ".xisf" in item.lower() or ".fits" in item.lower()]
+        if all(".xisf" in item.lower() for item in file_list):
+            load_func = cls.__load_xisf
+        elif all(".fits" in item.lower() for item in file_list):
+            load_func = cls.__load_fits
+        else:
+            raise ValueError("There are mixed XISF and FITS files in the folder.")
+        print("Loading image meta and sorting according to timestamps...")
+        time.sleep(0.1)
+
+        progress_bar = tqdm.tqdm(total=len(file_list))
         timestamped_file_list = []
         for item in file_list:
             fp = os.path.join(input_folder, item)
-            xisf = XISF(fp)
-            img_meta = xisf.get_images_metadata()[0]
-            timestamp = img_meta["FITSKeywords"]["DATE-OBS"][0]['value']
-            datetime_reg = re.compile("(\d{4}-\d{2}-\d{2}).*(\d{2}:\d{2}:\d{2})")
-            match = datetime_reg.match(timestamp)
-            date_part = match.group(1)
-            time_part = match.group(2)
-            year, month, day = date_part.split("-")
-            year, month, day = int(year), int(month), int(day)
-            hour, minute, second = time_part.split(":")
-            hour, minute, second = int(hour), int(minute), int(second)
-            timestamp = datetime.datetime(year=year, month=month, day=day, hour=hour, minute=minute, second=second)
-            exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
+            _, timestamp, exposure = load_func(fp, non_linear, load_image=False)
             timestamped_file_list.append((fp, timestamp, exposure))
+            progress_bar.update()
+        progress_bar.close()
+
         timestamped_file_list.sort(key=lambda x: x[1])
-
+        file_paths = [item[0] for item in timestamped_file_list]
+        timestamps = [item[1] for item in timestamped_file_list]
+        exposures = [item[2] for item in timestamped_file_list]
         boarders = np.array([])
-        timestamps = []
-        imgs = []
-        exposures = []
-        print("Loading images...")
+        print("Loading and cropping images...")
         time.sleep(0.1)
-        progress_bar = tqdm.tqdm(total=len(timestamped_file_list))
-        for fp, timestamp, exposure in timestamped_file_list:
-            timestamps.append(timestamp)
-            exposures.append(exposure)
-            xisf = XISF(fp)
-            img_data = xisf.read_image(0)
-            img_data = np.array(img_data)
-            if img_data.shape[-1] == 3:
-                img_data = Dataset.to_gray(img_data)
+        progress_bar = tqdm.tqdm(total=len(file_list))
 
-            img_data.shape = *img_data.shape[:2],
-            if not non_linear:
-                img_data = Dataset.stretch_image(img_data)
-            img_data = img_data.astype('float32')
-            imgs.append(img_data)
+        img, _, _ = load_func(file_paths[0], non_linear, True)
+        imgs = np.zeros((len(file_paths), *img.shape), dtype='float32')
+        for num, fp in enumerate(file_paths):
+            img_data, _, _ = load_func(fp, non_linear, load_image=True)
+            imgs[num] = img_data
             y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
-
             y_boarders, x_boarders = Dataset.crop_fine(
                 img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
             boarders = np.append(boarders, np.array([*y_boarders, *x_boarders]))
             progress_bar.update()
+        progress_bar.close()
         y_boarders = int(np.max(boarders[::4])), int(np.min(boarders[1::4]))
         x_boarders = int(np.max(boarders[2::4])), int(np.min(boarders[3::4]))
         x_left, x_right = x_boarders
