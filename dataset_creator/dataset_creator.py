@@ -109,9 +109,19 @@ class SourceData:
 
     @staticmethod
     def __process_img_data(img_data, non_linear):
+        # sometimes image is returned in channels first format. Converting to channels last in this case
+        if img_data.shape[0] in [1, 3]:
+            img_data = np.swapaxes(img_data, 0, 2)
+        # converting to grascale
         if img_data.shape[-1] == 3:
             img_data = Dataset.to_gray(img_data)
+        # convert to 2 dims array
         img_data.shape = *img_data.shape[:2],
+
+        # rotate image to have bigger width than height
+        if img_data.shape[0] > img_data.shape[1]:
+            img_data = np.swapaxes(img_data, 0, 1)
+        # Stretch image if it's in linear state
         if not non_linear:
             img_data = Dataset.stretch_image(img_data)
         img_data = img_data.astype('float32')
@@ -177,6 +187,7 @@ class SourceData:
 
         img, _, _ = load_func(file_paths[0], non_linear, True)
         imgs = np.zeros((len(file_paths), *img.shape), dtype='float32')
+
         for num, fp in enumerate(file_paths):
             img_data, _, _ = load_func(fp, non_linear, load_image=True)
             imgs[num] = img_data
@@ -190,7 +201,6 @@ class SourceData:
         x_boarders = int(np.max(boarders[2::4])), int(np.min(boarders[3::4]))
         x_left, x_right = x_boarders
         y_top, y_bottom = y_boarders
-        imgs = np.array(imgs)
         imgs = imgs[:, y_top: y_bottom, x_left: x_right]
         return imgs, timestamps, exposures
 
@@ -220,21 +230,21 @@ class Dataset:
         y_top = x_left = 0
         y_bottom, x_right = img_data.shape[:2]
         for num, line in enumerate(img_data):
-            if line[-1] != 0 or line[0] != 0:
+            if np.any(line):
                 y_top = num
                 break
         for num, line in enumerate(img_data[::-1]):
-            if line[-1] != 0 or line[0] != 0:
+            if np.any(line):
                 y_bottom -= num
                 break
 
         for num, line in enumerate(img_data.T):
-            if line[-1] != 0 or line[0] != 0:
+            if np.any(line):
                 x_left = num
                 break
 
         for num, line in enumerate(img_data.T[::-1]):
-            if line[-1] != 0 or line[0] != 0:
+            if np.any(line):
                 x_right -= num
                 break
         if to_do:

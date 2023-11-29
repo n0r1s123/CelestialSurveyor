@@ -153,13 +153,10 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
 
         if model_path == "default":
             model_path = get_model_path()
-
-
         model = decrypt_model(model_path)
-
-
         coords = np.array([np.array([y, x]) for y in ys for x in xs])
         number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
+        pass
         coord_batches = np.array_split(coords, number_of_batches, axis=0)
         total_len = len(coord_batches)
 
