@@ -1,6 +1,7 @@
 import os
 import tensorflow as tf
-from dataset_creator.dataset_creator import SourceData, Dataset
+from dataset_creator.dataset import SourceData
+from dataset_creator.training_dataset import TrainingDataset
 from cryptography.fernet import Fernet
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -92,11 +93,11 @@ def main():
             'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
             # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
-            'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
+            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
             # 'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
             # 'D:\\Boris\\astro\\M31_2\\Pix\\registered\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB',
         ],
@@ -104,7 +105,7 @@ def main():
         non_linear=True
     )
 
-    dataset = Dataset(source_data)
+    dataset = TrainingDataset(source_data)
 
     training_generator = dataset.batch_generator(batch_size=10)
     val_generator = dataset.batch_generator(batch_size=10)

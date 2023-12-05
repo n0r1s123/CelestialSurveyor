@@ -5,11 +5,9 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import tqdm
-from dataset_creator.dataset_creator import Dataset, SourceData
+from dataset_creator.dataset import Dataset, SourceData
 import tensorflow as tf
 tf.get_logger().setLevel('FATAL')
-import matplotlib
-matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import numpy as np
@@ -19,7 +17,8 @@ from cryptography.fernet import Fernet
 from io import BytesIO
 import h5py
 import argparse
-
+import warnings
+warnings.filterwarnings("ignore")
 
 def get_model_path():
     root_dir = os.path.dirname(os.path.realpath(__file__))
@@ -68,9 +67,9 @@ def confirm_prediction(model, dataset, y, x, dataset_num):
     imgs_batch = []
     ts_pred = []
     ts_diff = dataset.source_data.diff_timestamps[dataset_num]
-    ts_norm = dataset.source_data.normalized_timestamps[dataset_num][1:]
+    ts_norm = dataset.source_data.normalized_timestamps[dataset_num]
     ts = np.array(list(zip(ts_diff, ts_norm)))
-    y_shape, x_shape =  dataset.source_data.raw_dataset[dataset_num][0].shape[:2]
+    y_shape, x_shape = dataset.source_data.raw_dataset[dataset_num][0].shape[:2]
     for y, x in coords:
         if x < 0 or y < 0 or x + 64 > x_shape or y + 64 > y_shape:
             continue
@@ -149,20 +148,19 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
         fig = plt.figure(figsize=figsize)
         ax = fig.add_axes([0, 0, 1, 1])
 
-        imgplot = ax.imshow(max_image, cmap='gray')
+        ax.imshow(max_image, cmap='gray')
 
         if model_path == "default":
             model_path = get_model_path()
         model = decrypt_model(model_path)
         coords = np.array([np.array([y, x]) for y in ys for x in xs])
         number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
-        pass
         coord_batches = np.array_split(coords, number_of_batches, axis=0)
         total_len = len(coord_batches)
 
         objects_coords = []
         ts_diff = dataset.source_data.diff_timestamps[num]
-        ts_norm = dataset.source_data.normalized_timestamps[num][1:]
+        ts_norm = dataset.source_data.normalized_timestamps[num]
         ts = np.array(list(zip(ts_diff, ts_norm)))
         progress_bar = tqdm.tqdm(total=total_len)
         for coord_batch in coord_batches:
@@ -175,7 +173,6 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
                 ts_pred.append(ts)
 
             imgs_batch = np.array(imgs_batch)
-            # ts_batch = dataset.source_data.diff_timestamps[num]
             results = model.predict([imgs_batch, np.array(ts_pred)], verbose=0)
             for res, (y, x) in zip(results, coord_batch):
                 if res > 0.8:
@@ -193,7 +190,6 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
                                           edgecolor=color,
                                           facecolor='none',
                                           lw=4))
-            draw = False
             for y_pr, x_pr in processed:
                 if x_pr - (gif_size // 2) * 64 <= x <= x_pr + (gif_size // 2) * 64 and \
                         y_pr - (gif_size // 2) * 64 <= y <= y_pr + (gif_size // 2) * 64:
@@ -228,13 +224,13 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
 
 
 if __name__ == '__main__':
-    version = "0.1.3"
+    version = "0.1.5"
     arg_parser = argparse.ArgumentParser(
         prog='CelestialSurveyor',
         description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '
                     'locating asteroids and comets within the vastness of the cosmic terrain')
     arg_parser.add_argument('-s', '--source_folder', dest='source_folder', type=str,
-                            help='Path to the folder with xisf files to be analyzed')
+                            help='Path to the folder with xisf or fit or fits files to be analyzed')
     arg_parser.add_argument('-o', '--output_folder', dest='output_folder', type=str,
                             help='Path to the folder where results will be stored')
     arg_parser.add_argument('-m', '--model_path', dest='model_path', type=str, default="default",
