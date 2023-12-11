@@ -1,6 +1,5 @@
 import datetime
 import os
-import queue
 import re
 
 import astropy.io.fits
@@ -11,7 +10,6 @@ import tqdm
 
 from auto_stretch.stretch import Stretch
 from xisf import XISF
-from PIL import Image
 from bs4 import BeautifulSoup
 from multiprocessing import Process, Queue
 from multiprocessing.shared_memory import SharedMemory
@@ -63,7 +61,6 @@ def load_fits(file_path, non_linear=False, load_image=True):
     return img_data, timestamp, exposure
 
 
-
 def load_xisf(file_path, non_linear=False, load_image=True):
     xisf = XISF(file_path)
     img_meta = xisf.get_images_metadata()[0]
@@ -88,7 +85,6 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
     x_boar_buf = SharedMemory(name=x_buf_name, create=False)
     x_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=x_boar_buf.buf)
 
-    # print(num_list, load_fps)
     for num, fp in zip(num_list, load_fps):
 
         img_data, _, _ = load_func(fp, non_linear, load_image=True)
@@ -100,54 +96,31 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
         x_boar[num] = np.array(x_boarders, dtype="uint16")
         progress_queue.put(num)
     imgs_buf.close()
-        
-        # print(y_boar)
-        # boarders = np.append(boarders, np.array([*y_boarders, *x_boarders]))
+
 
 class SourceData:
-    def __init__(self, folders=None, samples_folder=None, non_linear=False):
+    def __init__(self, folder, non_linear=False):
 
         self.imgs_shm = None
         self.y_boarders_shm = None
         self.x_boarders_shm = None
-        self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = self.__load_raw_dataset(folders, non_linear)
-        normalized_timestamps = [[(item - min(timestamps)).total_seconds() for item in timestamps] for timestamps in self.timestamps]
-        self.normalized_timestamps = [np.array(
-            [item / max(timestamps) for item in timestamps]) for timestamps in normalized_timestamps]
-        diff_timestamps = [np.array([(timestamps[i] - timestamps[i-1]).total_seconds() for i in range(len(timestamps))]) for timestamps in self.timestamps]
-        self.diff_timestamps = [(diffs - np.min(diffs)) / (np.max(diffs) - np.min(diffs)) for diffs in diff_timestamps]
-        # for diffs in diff_timestamps:
-        #     (diffs - np.min(diffs)) / (np.max(diffs) - np.min(diffs))
-        if samples_folder is not None and os.path.exists(samples_folder):
-            self.object_samples = self.__load_samples(samples_folder)
-        else:
-            self.object_samples = []
+        self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = \
+            self.__load_raw_dataset(folder, non_linear)
+        normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
+        self.normalized_timestamps = np.array([item / max(normalized_timestamps) for item in normalized_timestamps])
 
+        diff_timestamps = np.array(
+            [(self.timestamps[i] - self.timestamps[i-1 if i-1 >= 0 else 0]
+              ).total_seconds() for i in range(len(self.timestamps))])
+        self.diff_timestamps = (diff_timestamps - np.min(diff_timestamps)
+                                ) / (np.max(diff_timestamps) - np.min(diff_timestamps))
 
-    def __load_raw_dataset(self, folders, non_linear=False):
-        raw_dataset = [self.crop_folder_on_the_fly(folder, non_linear) for folder in folders]
-        all_timestamps = [item[1] for item in raw_dataset]
-        all_exposures = [item[2] for item in raw_dataset]
-        raw_dataset = [item[0] for item in raw_dataset]
-        all_exclusion_boxes = []
-        img_shapes = []
-        for num1, folder in enumerate(folders):
-            img_shape = raw_dataset[num1].shape[1:]
-            exclusion_boxes = self.__load_exclusion_boxes(folder, img_shape)
-            all_exclusion_boxes.append(exclusion_boxes)
-            img_shapes.append(img_shape)
+    def __load_raw_dataset(self, folder, non_linear=False):
+        raw_dataset, all_timestamps, all_exposures = self.crop_folder_on_the_fly(folder, non_linear=non_linear)
+        img_shape = raw_dataset.shape[1:]
+        exclusion_boxes = self.__load_exclusion_boxes(folder, img_shape)
 
-        print("Raw image data loaded:")
-        print(f"SHAPE: {[item.shape for item in raw_dataset]}")
-        print(f"Used RAM: {sum([item.itemsize * item.size for item in raw_dataset]) // (1024 * 1024)} Mb")
-
-        return raw_dataset, all_exposures, all_timestamps, img_shapes, all_exclusion_boxes
-
-    @classmethod
-    def __load_samples(cls, samples_folder):
-        file_list = [os.path.join(samples_folder, item) for item in os.listdir(samples_folder) if ".tif" in item]
-        samples = np.array([np.array(Image.open(item)) for item in file_list])
-        return samples
+        return raw_dataset, all_exposures, all_timestamps, img_shape, exclusion_boxes
 
     @classmethod
     def __load_exclusion_boxes(cls, folder, img_shape):
@@ -180,12 +153,6 @@ class SourceData:
 
         return boxes
 
-
-
-
-
-
-
     def crop_folder_on_the_fly(self, input_folder, non_linear):
         file_list = [item for item in os.listdir(input_folder) if ".xisf" in item.lower() or ".fits" in item.lower()]
         if not file_list:
@@ -216,9 +183,11 @@ class SourceData:
         print("Loading and cropping images...")
         time.sleep(0.1)
 
-
         img, _, _ = load_func(file_paths[0], non_linear, True)
-        mem_size = int(np.prod((len(file_paths), *img.shape))) * 4
+        mem_size = 1
+        for n in (len(file_paths), *img.shape):
+            mem_size = mem_size * n
+        mem_size = mem_size * 4
         self.imgs_shm = SharedMemory(size=mem_size, create=True)
         images_shape = (len(file_paths), *img.shape)
         imgs = np.ndarray(images_shape, dtype='float32', buffer=self.imgs_shm.buf)
@@ -227,7 +196,6 @@ class SourceData:
         y_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16', buffer=self.y_boarders_shm.buf)
         self.x_boarders_shm = SharedMemory(size=len(file_paths) * 2 * 2, create=True)
         x_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16', buffer=self.x_boarders_shm.buf)
-        # worker_num = os.cpu_count()
         worker_num = min((os.cpu_count(), 4))
         processes = []
         progress_bar = tqdm.tqdm(total=len(file_list))
@@ -266,8 +234,15 @@ class SourceData:
 class Dataset:
     ZERO_TOLERANCE = 100
 
-    def __init__(self, source_data: SourceData):
-        self.source_data = source_data
+    def __init__(self, source_data):
+
+        if isinstance(source_data, SourceData):
+            self.source_data = [source_data]
+        else:
+            self.source_data = source_data
+        print("Raw image data loaded:")
+        print(f"SHAPE: {[item.raw_dataset.shape for item in self.source_data]}")
+        print(f"Used RAM: {sum([item.raw_dataset.itemsize * item.raw_dataset.size for item in self.source_data]) // (1024 * 1024)} Mb")
 
     @classmethod
     def stretch_image(cls, img_data):
@@ -386,8 +361,6 @@ class Dataset:
         return imgs
 
     def get_shrinked_img_series(self, size, y, x, dataset=None, dataset_idx=0):
-        dataset = self.source_data.raw_dataset[dataset_idx] if dataset is None else dataset
+        dataset = self.source_data[dataset_idx].raw_dataset if dataset is None else dataset
         shrinked = np.copy(dataset[:, y:y+size, x:x+size])
         return shrinked
-
-

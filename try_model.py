@@ -66,10 +66,10 @@ def confirm_prediction(model, dataset, y, x, dataset_num):
     coords = np.array([[y + dir_y * movement, x + dir_x * movement] for dir_y in directions for dir_x in directions])
     imgs_batch = []
     ts_pred = []
-    ts_diff = dataset.source_data.diff_timestamps[dataset_num]
-    ts_norm = dataset.source_data.normalized_timestamps[dataset_num]
+    ts_diff = dataset.source_data[dataset_num].diff_timestamps
+    ts_norm = dataset.source_data[dataset_num].normalized_timestamps
     ts = np.array(list(zip(ts_diff, ts_norm)))
-    y_shape, x_shape = dataset.source_data.raw_dataset[dataset_num][0].shape[:2]
+    y_shape, x_shape = dataset.source_data[dataset_num].raw_dataset[0].shape[:2]
     for y, x in coords:
         if x < 0 or y < 0 or x + 64 > x_shape or y + 64 > y_shape:
             continue
@@ -110,30 +110,29 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
         os.makedirs(output_folder)
 
     batch_size = 20
-    source_data = SourceData(
-        [
-            source_folder,
-            # 'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
-            # # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-            # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
-            # # 'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
-            # # 'D:\\Boris\\astro\\M31_2\\Pix\\registered\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB',
-            # # 'D:\\Boris\\astro\\M78\\Pix\\registered\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB'
-        ],
-        'C:\\git\\object_recognition\\star_samples',
-        non_linear=non_linear)
-    dataset = Dataset(source_data)
-    for num, imgs in enumerate(dataset.source_data.raw_dataset):
-        print(f"Processing object number {num+1} of {len(dataset.source_data.raw_dataset)}")
-        # imgs = dataset.source_data.raw_dataset[0]
-        # for _ in range(5):
-        #     imgs, _ = dataset.draw_object_on_image_series_numpy(imgs)
 
+    # Testing
+    dataset = Dataset([
+        SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True),
+        SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
+        SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
+        SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
+        SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True),
+        SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True),
+        SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
+        SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Fits', non_linear=False),
+
+    ])
+
+    # # Production
+    # dataset = Dataset([
+    #     SourceData(source_folder, non_linear=non_linear)
+    # ])
+
+    for num, imgs in enumerate(dataset.source_data):
+        imgs = imgs.raw_dataset
+        print(f"Processing object number {num+1} of {len(imgs)}")
         max_image = dataset.get_max_image(imgs)
         ys = np.arange(0, imgs[0].shape[0], 64)
         ys = ys[:-1]
@@ -159,8 +158,8 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
         total_len = len(coord_batches)
 
         objects_coords = []
-        ts_diff = dataset.source_data.diff_timestamps[num]
-        ts_norm = dataset.source_data.normalized_timestamps[num]
+        ts_diff = dataset.source_data[num].diff_timestamps
+        ts_norm = dataset.source_data[num].normalized_timestamps
         ts = np.array(list(zip(ts_diff, ts_norm)))
         progress_bar = tqdm.tqdm(total=total_len)
         for coord_batch in coord_batches:
@@ -209,7 +208,7 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
                 new_shape[1] += 20
                 new_frames = np.zeros(new_shape)
                 new_frames[:, :-20, :] = frames
-                for frame, original_ts in zip(new_frames, dataset.source_data.timestamps[num]):
+                for frame, original_ts in zip(new_frames, dataset.source_data[num].timestamps):
                     cv2.putText(frame, text=original_ts.strftime("%d/%m/%Y %H:%M:%S %Z"), org=(70, 64 * gif_size + 16),
                                 fontFace=1, fontScale=1, color=(255, 255, 255), thickness=0)
                 new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in new_frames]

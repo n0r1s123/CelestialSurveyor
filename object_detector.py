@@ -88,24 +88,19 @@ def main():
     )
 
     print(model.summary())
-    source_data = SourceData(
-        [
-            'C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped',
-            # 'C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\',
-            # 'C:\\Users\\bsolomin\\Astro\\M81\\cropped\\',
-            # 'D:\\Boris\\astro\\M31_2\\Pix\\registered\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB',
+    dataset = TrainingDataset([
+            # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
+            SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Fits', non_linear=False),
         ],
         samples_folder='C:\\git\\object_recognition\\star_samples',
-        non_linear=True
     )
-
-    dataset = TrainingDataset(source_data)
 
     training_generator = dataset.batch_generator(batch_size=10)
     val_generator = dataset.batch_generator(batch_size=10)

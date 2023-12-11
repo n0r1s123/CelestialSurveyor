@@ -1,21 +1,34 @@
+import os
 import random
 import numpy as np
 
-from .dataset import Dataset, SourceData
+from PIL import Image
+
+from .dataset import Dataset
+
 
 class TrainingDataset(Dataset):
-    def __init__(self, source_data: SourceData):
+    def __init__(self, source_data, samples_folder: str):
         super(TrainingDataset, self).__init__(source_data)
+        if not os.path.exists(samples_folder):
+            raise ValueError(f"Samples folder '{samples_folder}' doesn't exist")
+        self.object_samples = self.__load_samples(samples_folder)
+
+    @classmethod
+    def __load_samples(cls, samples_folder):
+        file_list = [os.path.join(samples_folder, item) for item in os.listdir(samples_folder) if ".tif" in item]
+        samples = np.array([np.array(Image.open(item)) for item in file_list])
+        return samples
 
     def get_random_shrink(self, dataset_idx=0):
         size = 64
-        exclusion_boxes = self.source_data.exclusion_boxes[dataset_idx]
+        exclusion_boxes = self.source_data[dataset_idx].exclusion_boxes
         generated = False
 
         # TODO: bad implementation need to rework
         while not generated:
-            y = random.randint(0, self.source_data.img_shape[dataset_idx][0] - size)
-            x = random.randint(0, self.source_data.img_shape[dataset_idx][1] - size)
+            y = random.randint(0, self.source_data[dataset_idx].img_shape[0] - size)
+            x = random.randint(0, self.source_data[dataset_idx].img_shape[1] - size)
             if exclusion_boxes is not None and len(exclusion_boxes) > 0:
                 for box in exclusion_boxes:
                     x1, y1, x2, y2 = box
@@ -98,7 +111,7 @@ class TrainingDataset(Dataset):
         number_of_artefacts = random.choice(list(range(1, 5)) + [0] * 10)
         for _ in range(number_of_artefacts):
             y_shape, x_shape = imgs[0].shape[:2]
-            star_img = random.choice(self.source_data.object_samples)
+            star_img = random.choice(self.object_samples)
             start_image_idx = random.randint(0, len(imgs) - 1)
             y = random.randint(0, y_shape - 1)
             x = random.randint(0, x_shape - 1)
@@ -137,7 +150,8 @@ class TrainingDataset(Dataset):
 
     def draw_variable_star(self, imgs, dataset_idx):
         old_images = np.copy(imgs)
-        timestamps = [0.] + [(item - self.source_data.timestamps[dataset_idx][0]).total_seconds() for num, item in enumerate(self.source_data.timestamps[dataset_idx])]
+        timestamps = [0.] + [(item - self.source_data[dataset_idx].timestamps[0]).total_seconds(
+            ) for num, item in enumerate(self.source_data[dataset_idx].timestamps)]
         period = 1.5 * timestamps[-1]
         max_brightness = random.randrange(80, 101) / 100
         min_brightness = max_brightness - random.randrange(30, 61) / 100
@@ -145,7 +159,7 @@ class TrainingDataset(Dataset):
         y_shape, x_shape = imgs[0].shape[:2]
         y = random.randint(0, y_shape - 1)
         x = random.randint(0, x_shape - 1)
-        star_img = random.choice(self.source_data.object_samples)
+        star_img = random.choice(self.object_samples)
         star_brightness = np.max(star_img)
         for num, (img, ts) in enumerate(zip(imgs, timestamps)):
             new_phaze = 2 * np.pi * ts / period + starting_phase
@@ -165,7 +179,7 @@ class TrainingDataset(Dataset):
         old_images = np.copy(imgs)
         result = []
         y_shape, x_shape = imgs[0].shape[:2]
-        star_img = random.choice(self.source_data.object_samples)
+        star_img = random.choice(self.object_samples)
         start_image_idx = random.randint(0, len(imgs) - 1)
         start_y = random.randint(0, y_shape - 1)
         start_x = random.randint(0, x_shape - 1)
@@ -179,15 +193,17 @@ class TrainingDataset(Dataset):
         divider = 100
         choices = list(range(min_vector, 0)) + list(range(1, max_vector))
         movement_vector = np.array([random.choice(choices)/divider, random.choice(choices)/divider])
-        time_diff = (self.source_data.timestamps[dataset_idx][-1] - self.source_data.timestamps[dataset_idx][0]).total_seconds()/3600
+        time_diff = (self.source_data[dataset_idx].timestamps[-1] - self.source_data[dataset_idx].timestamps[0]
+                     ).total_seconds() / 3600
         if all(item * time_diff < 1 for item in movement_vector):
-            drawn=0
-        start_ts = self.source_data.timestamps[dataset_idx][start_image_idx]
+            drawn = 0
+        start_ts = self.source_data[dataset_idx].timestamps[start_image_idx]
 
         movement_vector = - movement_vector
         to_beginning_slice = slice(None, start_image_idx)
         for img, exposure, timestamp in zip(
-                imgs[to_beginning_slice][::-1], self.source_data.exposures[dataset_idx][to_beginning_slice], self.source_data.timestamps[dataset_idx][to_beginning_slice]
+                imgs[to_beginning_slice][::-1], self.source_data[dataset_idx].exposures[to_beginning_slice],
+                self.source_data[dataset_idx].timestamps[to_beginning_slice]
         ):
             inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
             y, x = inter_image_movement_vector + np.array([start_y, start_x])
@@ -200,7 +216,9 @@ class TrainingDataset(Dataset):
 
         to_end_slice = slice(start_image_idx, None, None)
         for img, exposure, timestamp in zip(
-                imgs[to_end_slice], self.source_data.exposures[dataset_idx][to_end_slice], self.source_data.timestamps[dataset_idx][to_end_slice]
+                imgs[to_end_slice],
+                self.source_data[dataset_idx].exposures[to_end_slice],
+                self.source_data[dataset_idx].timestamps[to_end_slice]
         ):
             inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
             y, x = inter_image_movement_vector + np.array([start_y, start_x])
@@ -236,10 +254,12 @@ class TrainingDataset(Dataset):
         return result
 
     def make_batch(self, batch_size):
-        dataset_idx = random.randrange(0, len(self.source_data.raw_dataset))
+        dataset_idx = random.randrange(0, len(self.source_data))
         batch = [self.make_series(dataset_idx) for _ in range(batch_size)]
         X_batch = np.array([item[0] for item in batch])
-        TS_batch = np.array([[self.source_data.diff_timestamps[dataset_idx], self.source_data.normalized_timestamps[dataset_idx]] for _ in batch])
+        TS_batch = np.array([[
+            self.source_data[dataset_idx].diff_timestamps,
+            self.source_data[dataset_idx].normalized_timestamps] for _ in batch])
         TS_batch = np.swapaxes(TS_batch, 1, 2)
         y_batch = np.array([item[1] for item in batch])
         return [X_batch, TS_batch], y_batch
