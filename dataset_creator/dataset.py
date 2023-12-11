@@ -1,5 +1,6 @@
 import datetime
 import os
+import queue
 import re
 
 import astropy.io.fits
@@ -12,10 +13,103 @@ from auto_stretch.stretch import Stretch
 from xisf import XISF
 from PIL import Image
 from bs4 import BeautifulSoup
+from multiprocessing import Process, Queue
+from multiprocessing.shared_memory import SharedMemory
 
+
+def __process_img_data(img_data, non_linear):
+    # sometimes image is returned in channels first format. Converting to channels last in this case
+    if img_data.shape[0] in [1, 3]:
+        img_data = np.swapaxes(img_data, 0, 2)
+    # converting to grascale
+    if img_data.shape[-1] == 3:
+        img_data = Dataset.to_gray(img_data)
+    # convert to 2 dims array
+    img_data.shape = *img_data.shape[:2],
+
+    # rotate image to have bigger width than height
+    if img_data.shape[0] > img_data.shape[1]:
+        img_data = np.swapaxes(img_data, 0, 1)
+    # Stretch image if it's in linear state
+    if not non_linear:
+        img_data = Dataset.stretch_image(img_data)
+    img_data = img_data.astype('float32')
+    return img_data
+
+
+def __get_datetime_from_str(timestamp):
+    datetime_reg = re.compile("(\d{4}-\d{2}-\d{2}).*(\d{2}:\d{2}:\d{2})")
+    match = datetime_reg.match(timestamp)
+    date_part = match.group(1)
+    time_part = match.group(2)
+    year, month, day = date_part.split("-")
+    year, month, day = int(year), int(month), int(day)
+    hour, minute, second = time_part.split(":")
+    hour, minute, second = int(hour), int(minute), int(second)
+    timestamp = datetime.datetime(year=year, month=month, day=day, hour=hour, minute=minute, second=second)
+    return timestamp
+
+
+def load_fits(file_path, non_linear=False, load_image=True):
+    with astropy.io.fits.open(file_path) as hdul:
+        header = hdul[0].header
+        exposure = float(header['EXPTIME'])
+        timestamp = __get_datetime_from_str(header['DATE-OBS'])
+        if load_image:
+            img_data = hdul[0].data
+            img_data = __process_img_data(img_data, non_linear)
+        else:
+            img_data = None
+    return img_data, timestamp, exposure
+
+
+
+def load_xisf(file_path, non_linear=False, load_image=True):
+    xisf = XISF(file_path)
+    img_meta = xisf.get_images_metadata()[0]
+    timestamp = __get_datetime_from_str(img_meta["FITSKeywords"]["DATE-OBS"][0]['value'])
+    exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
+    if load_image:
+        img_data = xisf.read_image(0)
+        img_data = np.array(img_data)
+        img_data = __process_img_data(img_data, non_linear)
+
+    else:
+        img_data = None
+    return img_data, timestamp, exposure
+
+
+def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non_linear, progress_queue: Queue):
+    img_buf_name, y_buf_name, x_buf_name = shared_mem_names
+    imgs_buf = SharedMemory(name=img_buf_name, create=False)
+    loaded_images = np.ndarray(imgs_shape, dtype='float32', buffer=imgs_buf.buf)
+    y_boar_buf = SharedMemory(name=y_buf_name, create=False)
+    y_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=y_boar_buf.buf)
+    x_boar_buf = SharedMemory(name=x_buf_name, create=False)
+    x_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=x_boar_buf.buf)
+
+    # print(num_list, load_fps)
+    for num, fp in zip(num_list, load_fps):
+
+        img_data, _, _ = load_func(fp, non_linear, load_image=True)
+        loaded_images[num] = img_data
+        y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
+        y_boarders, x_boarders = Dataset.crop_fine(
+            img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
+        y_boar[num] = np.array(y_boarders, dtype="uint16")
+        x_boar[num] = np.array(x_boarders, dtype="uint16")
+        progress_queue.put(num)
+    imgs_buf.close()
+        
+        # print(y_boar)
+        # boarders = np.append(boarders, np.array([*y_boarders, *x_boarders]))
 
 class SourceData:
     def __init__(self, folders=None, samples_folder=None, non_linear=False):
+
+        self.imgs_shm = None
+        self.y_boarders_shm = None
+        self.x_boarders_shm = None
         self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = self.__load_raw_dataset(folders, non_linear)
         normalized_timestamps = [[(item - min(timestamps)).total_seconds() for item in timestamps] for timestamps in self.timestamps]
         self.normalized_timestamps = [np.array(
@@ -29,9 +123,9 @@ class SourceData:
         else:
             self.object_samples = []
 
-    @classmethod
-    def __load_raw_dataset(cls, folders, non_linear=False):
-        raw_dataset = [cls.crop_folder_on_the_fly(folder, non_linear) for folder in folders]
+
+    def __load_raw_dataset(self, folders, non_linear=False):
+        raw_dataset = [self.crop_folder_on_the_fly(folder, non_linear) for folder in folders]
         all_timestamps = [item[1] for item in raw_dataset]
         all_exposures = [item[2] for item in raw_dataset]
         raw_dataset = [item[0] for item in raw_dataset]
@@ -39,7 +133,7 @@ class SourceData:
         img_shapes = []
         for num1, folder in enumerate(folders):
             img_shape = raw_dataset[num1].shape[1:]
-            exclusion_boxes = cls.__load_exclusion_boxes(folder, img_shape)
+            exclusion_boxes = self.__load_exclusion_boxes(folder, img_shape)
             all_exclusion_boxes.append(exclusion_boxes)
             img_shapes.append(img_shape)
 
@@ -86,77 +180,21 @@ class SourceData:
 
         return boxes
 
-    @staticmethod
-    def __get_datetime_from_str(timestamp):
-        datetime_reg = re.compile("(\d{4}-\d{2}-\d{2}).*(\d{2}:\d{2}:\d{2})")
-        match = datetime_reg.match(timestamp)
-        date_part = match.group(1)
-        time_part = match.group(2)
-        year, month, day = date_part.split("-")
-        year, month, day = int(year), int(month), int(day)
-        hour, minute, second = time_part.split(":")
-        hour, minute, second = int(hour), int(minute), int(second)
-        timestamp = datetime.datetime(year=year, month=month, day=day, hour=hour, minute=minute, second=second)
-        return timestamp
 
-    @staticmethod
-    def __process_img_data(img_data, non_linear):
-        # sometimes image is returned in channels first format. Converting to channels last in this case
-        if img_data.shape[0] in [1, 3]:
-            img_data = np.swapaxes(img_data, 0, 2)
-        # converting to grascale
-        if img_data.shape[-1] == 3:
-            img_data = Dataset.to_gray(img_data)
-        # convert to 2 dims array
-        img_data.shape = *img_data.shape[:2],
 
-        # rotate image to have bigger width than height
-        if img_data.shape[0] > img_data.shape[1]:
-            img_data = np.swapaxes(img_data, 0, 1)
-        # Stretch image if it's in linear state
-        if not non_linear:
-            img_data = Dataset.stretch_image(img_data)
-        img_data = img_data.astype('float32')
-        return img_data
 
-    @classmethod
-    def __load_xisf(cls, file_path, non_linear=False, load_image=True):
-        xisf = XISF(file_path)
-        img_meta = xisf.get_images_metadata()[0]
-        timestamp = cls.__get_datetime_from_str(img_meta["FITSKeywords"]["DATE-OBS"][0]['value'])
-        exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
-        if load_image:
-            img_data = xisf.read_image(0)
-            img_data = np.array(img_data)
-            img_data = cls.__process_img_data(img_data, non_linear)
 
-        else:
-            img_data = None
-        return img_data, timestamp, exposure
 
-    @classmethod
-    def __load_fits(cls, file_path, non_linear=False, load_image=True):
-        with astropy.io.fits.open(file_path) as hdul:
-            header = hdul[0].header
-            exposure = float(header['EXPTIME'])
-            timestamp = cls.__get_datetime_from_str(header['DATE-OBS'])
-            if load_image:
-                img_data = hdul[0].data
-                img_data = cls.__process_img_data(img_data, non_linear)
-            else:
-                img_data = None
-        return img_data, timestamp, exposure
 
-    @classmethod
-    def crop_folder_on_the_fly(cls, input_folder, non_linear):
+    def crop_folder_on_the_fly(self, input_folder, non_linear):
         file_list = [item for item in os.listdir(input_folder) if ".xisf" in item.lower() or ".fits" in item.lower()]
         if not file_list:
             raise ValueError(f"There are no files in '{input_folder}' with extensions "
                              f".fits, .FITS, .fit, .FIT, .xisf, .XISF and other combinations of capital-lower letters")
         if all(item.lower().endswith(".xisf") for item in file_list):
-            load_func = cls.__load_xisf
+            load_func = load_xisf
         elif all(item.lower().endswith(".fits") or item.lower().endswith(".fit") for item in file_list):
-            load_func = cls.__load_fits
+            load_func = load_fits
         else:
             raise ValueError("There are mixed XISF and FITS files in the folder.")
         print("Loading image meta and sorting according to timestamps...")
@@ -175,25 +213,50 @@ class SourceData:
         file_paths = [item[0] for item in timestamped_file_list]
         timestamps = [item[1] for item in timestamped_file_list]
         exposures = [item[2] for item in timestamped_file_list]
-        boarders = np.array([])
         print("Loading and cropping images...")
         time.sleep(0.1)
-        progress_bar = tqdm.tqdm(total=len(file_list))
+
 
         img, _, _ = load_func(file_paths[0], non_linear, True)
-        imgs = np.zeros((len(file_paths), *img.shape), dtype='float32')
+        mem_size = int(np.prod((len(file_paths), *img.shape))) * 4
+        self.imgs_shm = SharedMemory(size=mem_size, create=True)
+        images_shape = (len(file_paths), *img.shape)
+        imgs = np.ndarray(images_shape, dtype='float32', buffer=self.imgs_shm.buf)
 
-        for num, fp in enumerate(file_paths):
-            img_data, _, _ = load_func(fp, non_linear, load_image=True)
-            imgs[num] = img_data
-            y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
-            y_boarders, x_boarders = Dataset.crop_fine(
-                img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
-            boarders = np.append(boarders, np.array([*y_boarders, *x_boarders]))
+        self.y_boarders_shm = SharedMemory(size=len(file_paths) * 2 * 2, create=True)
+        y_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16', buffer=self.y_boarders_shm.buf)
+        self.x_boarders_shm = SharedMemory(size=len(file_paths) * 2 * 2, create=True)
+        x_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16', buffer=self.x_boarders_shm.buf)
+        # worker_num = os.cpu_count()
+        worker_num = min((os.cpu_count(), 4))
+        processes = []
+        progress_bar = tqdm.tqdm(total=len(file_list))
+        progress_queue = Queue()
+        for num in range(worker_num):
+            processes.append(
+                Process(target=load_worker, args=(
+                    file_paths[num::worker_num],
+                    list(range(len(file_paths)))[num::worker_num],
+                    images_shape,
+                    (self.imgs_shm.name, self.y_boarders_shm.name, self.x_boarders_shm.name),
+                    load_func,
+                    non_linear, 
+                    progress_queue
+                ))
+            )
+        for proc in processes:
+            proc.start()
+
+        for _ in range(len(file_paths)):
+            progress_queue.get()
             progress_bar.update()
+
+        for proc in processes:
+            proc.join()
         progress_bar.close()
-        y_boarders = int(np.max(boarders[::4])), int(np.min(boarders[1::4]))
-        x_boarders = int(np.max(boarders[2::4])), int(np.min(boarders[3::4]))
+
+        y_boarders = int(np.max(y_boaredrs[:, 0])), int(np.min(y_boaredrs[:, 1]))
+        x_boarders = int(np.max(x_boaredrs[:, 0])), int(np.min(x_boaredrs[:, 1]))
         x_left, x_right = x_boarders
         y_top, y_bottom = y_boarders
         imgs = imgs[:, y_top: y_bottom, x_left: x_right]
