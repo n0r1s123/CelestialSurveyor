@@ -13,6 +13,8 @@ from xisf import XISF
 from bs4 import BeautifulSoup
 from multiprocessing import Process, Queue
 from multiprocessing.shared_memory import SharedMemory
+import astroalign as aa
+
 
 
 def __process_img_data(img_data, non_linear):
@@ -99,24 +101,29 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
 
 
 class SourceData:
-    def __init__(self, folder, non_linear=False):
+    def __init__(self, folder, non_linear=False, num_from_session=0):
 
         self.imgs_shm = None
         self.y_boarders_shm = None
         self.x_boarders_shm = None
         self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = \
-            self.__load_raw_dataset(folder, non_linear)
+            self.__load_raw_dataset(folder, non_linear, num_from_session)
         normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
         self.normalized_timestamps = np.array([item / max(normalized_timestamps) for item in normalized_timestamps])
+        # self.normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
 
         diff_timestamps = np.array(
             [(self.timestamps[i] - self.timestamps[i-1 if i-1 >= 0 else 0]
               ).total_seconds() for i in range(len(self.timestamps))])
         self.diff_timestamps = (diff_timestamps - np.min(diff_timestamps)
                                 ) / (np.max(diff_timestamps) - np.min(diff_timestamps))
+        # self.diff_timestamps = np.array(
+        #     [(self.timestamps[i] - self.timestamps[i-1 if i-1 >= 0 else 0]
+        #       ).total_seconds() for i in range(len(self.timestamps))])
 
-    def __load_raw_dataset(self, folder, non_linear=False):
-        raw_dataset, all_timestamps, all_exposures = self.crop_folder_on_the_fly(folder, non_linear=non_linear)
+    def __load_raw_dataset(self, folder, non_linear=False, num_from_session=0):
+        raw_dataset, all_timestamps, all_exposures = self.crop_folder_on_the_fly(
+            folder, non_linear=non_linear, num_from_session=num_from_session)
         img_shape = raw_dataset.shape[1:]
         exclusion_boxes = self.__load_exclusion_boxes(folder, img_shape)
 
@@ -153,7 +160,7 @@ class SourceData:
 
         return boxes
 
-    def crop_folder_on_the_fly(self, input_folder, non_linear):
+    def crop_folder_on_the_fly(self, input_folder, non_linear, num_from_session=0):
         file_list = [item for item in os.listdir(input_folder) if ".xisf" in item.lower() or ".fits" in item.lower()]
         if not file_list:
             raise ValueError(f"There are no files in '{input_folder}' with extensions "
@@ -180,6 +187,25 @@ class SourceData:
         file_paths = [item[0] for item in timestamped_file_list]
         timestamps = [item[1] for item in timestamped_file_list]
         exposures = [item[2] for item in timestamped_file_list]
+
+        if num_from_session > 0:
+            new_file_paths = []
+            new_timestamps = []
+            new_exposures = []
+            add_number = 0
+            for num in range(len(timestamps)):
+                # new session if timestamp diss is more than 10 hours
+                if timestamps[num] - timestamps[num-1 if num-1 >= 0 else 0] > datetime.timedelta(hours=10):
+                    add_number = 0
+                if add_number < num_from_session:
+                    new_file_paths.append(file_paths[num])
+                    new_timestamps.append(timestamps[num])
+                    new_exposures.append(exposures[num])
+                    add_number += 1
+            file_paths = new_file_paths
+            timestamps = new_timestamps
+            exposures = new_exposures
+
         print("Loading and cropping images...")
         time.sleep(0.1)
 
@@ -198,7 +224,7 @@ class SourceData:
         x_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16', buffer=self.x_boarders_shm.buf)
         worker_num = min((os.cpu_count(), 4))
         processes = []
-        progress_bar = tqdm.tqdm(total=len(file_list))
+        progress_bar = tqdm.tqdm(total=len(file_paths))
         progress_queue = Queue()
         for num in range(worker_num):
             processes.append(

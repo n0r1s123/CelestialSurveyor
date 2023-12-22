@@ -6,6 +6,29 @@ from cryptography.fernet import Fernet
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+#
+#
+class Conv2Plus1D(tf.keras.layers.Layer):
+    def __init__(self, filters, kernel_size, padding, data_format):
+        """
+          A sequence of convolutional layers that first apply the convolution operation over the
+          spatial dimensions, and then the temporal dimension.
+        """
+        super().__init__()
+        self.seq = tf.keras.models.Sequential([
+            # Spatial decomposition
+            tf.keras.layers.Conv3D(filters=filters,
+                                   kernel_size=(1, kernel_size[1], kernel_size[2]),
+                                   padding=padding, data_format=data_format),
+            # Temporal decomposition
+            tf.keras.layers.Conv3D(filters=filters,
+                                   kernel_size=(kernel_size[0], 1, 1),
+                                   padding=padding, data_format=data_format)
+            ])
+
+    def call(self, x):
+        return self.seq(x)
+
 
 
 # Define your RNN model
@@ -14,27 +37,28 @@ def build_rnn_model(input_shape):
     timestamp_input = tf.keras.layers.Input(shape=(None, 2))
 
     first_part = tf.keras.models.Sequential([
-        tf.keras.layers.Conv3D(filters=32, kernel_size=(3, 3, 3), input_shape=(None, 64, 64, 1), padding='same',
+        Conv2Plus1D(filters=32, kernel_size=(3, 3, 3), padding='same',
                data_format="channels_last"),
-        tf.keras.layers.LeakyReLU(alpha=0.1),
+        tf.keras.layers.LeakyReLU(alpha=0.05),
         tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
         tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Conv3D(filters=64, kernel_size=(3, 3, 3), padding='same',
+        Conv2Plus1D(filters=64, kernel_size=(3, 3, 3), padding='same',
                data_format="channels_last"),
-        tf.keras.layers.LeakyReLU(alpha=0.1),
+        tf.keras.layers.LeakyReLU(alpha=0.05),
         tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
         tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Conv3D(filters=128, kernel_size=(3, 3, 3), padding='same',
+        Conv2Plus1D(filters=128, kernel_size=(3, 3, 3), padding='same',
                data_format="channels_last"),
-        tf.keras.layers.LeakyReLU(alpha=0.1),
+        tf.keras.layers.LeakyReLU(alpha=0.05),
         tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
         tf.keras.layers.BatchNormalization(),
+
         tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten()),
     ])
 
     second_part = tf.keras.models.Sequential([
-        tf.keras.layers.LSTM(256, return_sequences=True),
-        tf.keras.layers.LSTM(128, return_sequences=False),
+        tf.keras.layers.LSTM(256, return_sequences=False),
+        # tf.keras.layers.LSTM(128, return_sequences=False),
         tf.keras.layers.Dense(128),
         tf.keras.layers.LeakyReLU(alpha=0.1),
         tf.keras.layers.Dense(64),
@@ -72,32 +96,38 @@ def encrypt_model(model_name, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw=
 def main():
     print(tf.__version__)
     input_shape = (None, 64, 64, 1)
-    load_model_name = "model31"
-    save_model_name = "model32"
+    load_model_name = "model42"
+    save_model_name = "model46"
 
 
     # Build the model
 
     # Compile the model
-    # model = build_rnn_model(input_shape)
-    # model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model = build_rnn_model(input_shape)
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
     # Load model
-    model = tf.keras.models.load_model(
-        f'{load_model_name}.h5'
-    )
+    # model = tf.keras.models.load_model(
+    #     f'{load_model_name}.h5'
+    # )
 
     print(model.summary())
     dataset = TrainingDataset([
-            # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True),
+            SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, num_from_session=5),
             # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, num_from_session=15),
             # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
-            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
-            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True),
-            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True),
-            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, num_from_session=12),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, num_from_session=5),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, num_from_session=5),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
             # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
-            SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Fits', non_linear=False),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, num_from_session=5),
+            SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True),
         ],
         samples_folder='C:\\git\\object_recognition\\star_samples',
     )
@@ -120,8 +150,8 @@ def main():
             training_generator,
             validation_data=val_generator,
             steps_per_epoch=5000,
-            validation_steps=4000,
-            epochs=20,
+            validation_steps=2000,
+            epochs=40,
             callbacks=[early_stopping_monitor]
         )
     except KeyboardInterrupt:

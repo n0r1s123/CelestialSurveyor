@@ -136,7 +136,7 @@ class TrainingDataset(Dataset):
         return imgs
 
     def draw_hot_pixels(self, imgs):
-        probablity = 10
+        probablity = 70
         result = []
         for img in imgs:
             if random.randrange(1, 101) < probablity:
@@ -175,6 +175,8 @@ class TrainingDataset(Dataset):
         return imgs, drawn
 
     def draw_object_on_image_series_numpy(self, imgs, dataset_idx=0):
+        min_total_movement = 5  # px
+
         drawn = 1
         old_images = np.copy(imgs)
         result = []
@@ -188,11 +190,22 @@ class TrainingDataset(Dataset):
         expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
         multiplier = expected_max / star_max
         star_img = star_img * multiplier
-        max_vector = 3000
-        min_vector = -3000
-        divider = 100
-        choices = list(range(min_vector, 0)) + list(range(1, max_vector))
-        movement_vector = np.array([random.choice(choices)/divider, random.choice(choices)/divider])
+
+        # Calculate min and max movement vector length (pixels/hour)
+        total_time = self.source_data[dataset_idx].normalized_timestamps[-1] - \
+                     self.source_data[dataset_idx].normalized_timestamps[0]
+        total_time /= 3600
+        min_vector = max(min_total_movement / total_time, 0.5)
+        max_vector = 50.  # pixels/hour
+        vector_len = random.uniform(min_vector, max_vector)
+        movement_angle = random.uniform(0., np.pi)
+        movement_vector = np.array([np.sin(movement_angle), np.cos(movement_angle)]) * vector_len
+
+        # max_vector = 3000
+        # min_vector = -3000
+        # divider = 100
+        # choices = list(range(min_vector, 0)) + list(range(1, max_vector))
+        # movement_vector = np.array([random.choice(choices)/divider, random.choice(choices)/divider])
         time_diff = (self.source_data[dataset_idx].timestamps[-1] - self.source_data[dataset_idx].timestamps[0]
                      ).total_seconds() / 3600
         if all(item * time_diff < 1 for item in movement_vector):
@@ -243,11 +256,11 @@ class TrainingDataset(Dataset):
         else:
             res = 0
 
-        if res == 0:
-            if random.randint(0, 100) >= 80:
-                imgs = self.draw_one_image_artefact(imgs)
-            if random.randint(0, 100) >= 80:
-                imgs = self.draw_hot_pixels(imgs)
+        # if res == 0:
+        if random.randint(0, 100) >= 90:
+            imgs = self.draw_one_image_artefact(imgs)
+        if random.randint(0, 100) >= 90:
+            imgs = self.draw_hot_pixels(imgs)
 
         imgs = self.prepare_images(imgs)
         result = imgs, np.array([res])
@@ -263,6 +276,7 @@ class TrainingDataset(Dataset):
         TS_batch = np.swapaxes(TS_batch, 1, 2)
         y_batch = np.array([item[1] for item in batch])
         return [X_batch, TS_batch], y_batch
+        # return X_batch, y_batch
 
     def batch_generator(self, batch_size):
         while True:
