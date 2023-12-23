@@ -34,6 +34,8 @@ def __process_img_data(img_data, non_linear):
     if not non_linear:
         img_data = Dataset.stretch_image(img_data)
     img_data = img_data.astype('float32')
+
+    img_data = np.ascontiguousarray(img_data)
     return img_data
 
 
@@ -78,7 +80,8 @@ def load_xisf(file_path, non_linear=False, load_image=True):
     return img_data, timestamp, exposure
 
 
-def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non_linear, progress_queue: Queue):
+def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non_linear, progress_queue: Queue,
+                reference_image):
     img_buf_name, y_buf_name, x_buf_name = shared_mem_names
     imgs_buf = SharedMemory(name=img_buf_name, create=False)
     loaded_images = np.ndarray(imgs_shape, dtype='float32', buffer=imgs_buf.buf)
@@ -89,18 +92,29 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
 
     for num, fp in zip(num_list, load_fps):
 
+        rejected = False
         img_data, _, _ = load_func(fp, non_linear, load_image=True)
-        loaded_images[num] = img_data
-        y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
-        y_boarders, x_boarders = Dataset.crop_fine(
-            img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
-        y_boar[num] = np.array(y_boarders, dtype="uint16")
-        x_boar[num] = np.array(x_boarders, dtype="uint16")
-        progress_queue.put(num)
+        # img_data = img_data.T
+        try:
+            img_data, _ = aa.register(img_data, reference_image, fill_value=0)
+        except aa.MaxIterError:
+            rejected = True
+        if not rejected:
+            loaded_images[num] = img_data
+            y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
+            y_boarders, x_boarders = Dataset.crop_fine(
+                img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
+            y_boar[num] = np.array(y_boarders, dtype="uint16")
+            x_boar[num] = np.array(x_boarders, dtype="uint16")
+        progress_queue.put((num, rejected))
     imgs_buf.close()
 
 
 class SourceData:
+    BOARDER_OFFSET = 10
+    X_SPLITS = 3
+    Y_SPLITS = 3
+
     def __init__(self, folder, non_linear=False, num_from_session=0):
 
         self.imgs_shm = None
@@ -235,26 +249,69 @@ class SourceData:
                     (self.imgs_shm.name, self.y_boarders_shm.name, self.x_boarders_shm.name),
                     load_func,
                     non_linear, 
-                    progress_queue
+                    progress_queue,
+                    img
                 ))
             )
         for proc in processes:
             proc.start()
 
+        rejected_list = []
         for _ in range(len(file_paths)):
-            progress_queue.get()
+            res = progress_queue.get()
+            num, rejected = res
+            if rejected:
+                rejected_list.append(num)
+
             progress_bar.update()
 
         for proc in processes:
             proc.join()
         progress_bar.close()
 
+        if rejected_list:
+            imgs = np.delete(imgs, rejected_list, axis=0)
         y_boarders = int(np.max(y_boaredrs[:, 0])), int(np.min(y_boaredrs[:, 1]))
         x_boarders = int(np.max(x_boaredrs[:, 0])), int(np.min(x_boaredrs[:, 1]))
         x_left, x_right = x_boarders
         y_top, y_bottom = y_boarders
         imgs = imgs[:, y_top: y_bottom, x_left: x_right]
+        imgs = self.chop_imgs(imgs)
         return imgs, timestamps, exposures
+
+    def chop_imgs(self, imgs):
+        shape = imgs[0].shape
+        y_shape, x_shape = shape[:2]
+        y_split_size = (y_shape - 2 * self.BOARDER_OFFSET) // self.Y_SPLITS
+        x_split_size = (x_shape - 2 * self.BOARDER_OFFSET) // self.X_SPLITS
+        imgs = imgs[
+           :,
+           :y_split_size * self.Y_SPLITS + 2 * self.BOARDER_OFFSET,
+           :x_split_size * self.X_SPLITS + 2 * self.BOARDER_OFFSET,
+        ]
+        return imgs
+
+    def gen_splits(self):
+        shape = self.raw_dataset[0].shape
+        y_shape, x_shape = shape[:2]
+        y_split_size = (y_shape - 2 * self.BOARDER_OFFSET) // self.Y_SPLITS
+        x_split_size = (x_shape - 2 * self.BOARDER_OFFSET) // self.X_SPLITS
+        for y_num in range(self.Y_SPLITS):
+            for x_num in range(self.X_SPLITS):
+                y_offset = self.BOARDER_OFFSET + y_num * y_split_size
+                x_offset = self.BOARDER_OFFSET + x_num * x_split_size
+                not_aligned = self.raw_dataset[
+                              :,
+                              y_offset - self.BOARDER_OFFSET: y_offset + y_split_size + self.BOARDER_OFFSET,
+                              x_offset - self.BOARDER_OFFSET: x_offset + x_split_size + self.BOARDER_OFFSET]
+                # not_aligned.shape = *not_aligned.shape[:3], 1
+                aligned = np.ndarray((len(self.raw_dataset), y_split_size, x_split_size), dtype='float32')
+                aligned[0] = not_aligned[0, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
+                for num in range(1, len(not_aligned)):
+                    new_img, _ = aa.register(not_aligned[num], aligned[0], fill_value=0, min_area=9)
+                    aligned[num] = new_img
+
+                yield aligned, y_offset, x_offset
 
 
 class Dataset:
