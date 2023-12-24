@@ -59,6 +59,7 @@ def load_fits(file_path, non_linear=False, load_image=True):
         timestamp = __get_datetime_from_str(header['DATE-OBS'])
         if load_image:
             img_data = hdul[0].data
+            img_data = np.array(img_data)
             img_data = __process_img_data(img_data, non_linear)
         else:
             img_data = None
@@ -81,7 +82,7 @@ def load_xisf(file_path, non_linear=False, load_image=True):
 
 
 def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non_linear, progress_queue: Queue,
-                reference_image):
+                reference_image, to_align, to_skip_bad):
     img_buf_name, y_buf_name, x_buf_name = shared_mem_names
     imgs_buf = SharedMemory(name=img_buf_name, create=False)
     loaded_images = np.ndarray(imgs_shape, dtype='float32', buffer=imgs_buf.buf)
@@ -94,11 +95,14 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
 
         rejected = False
         img_data, _, _ = load_func(fp, non_linear, load_image=True)
-        # img_data = img_data.T
-        try:
-            img_data, _ = aa.register(img_data, reference_image, fill_value=0)
-        except aa.MaxIterError:
-            rejected = True
+        if to_align:
+            try:
+                img_data, _ = aa.register(img_data, reference_image, fill_value=0)
+            except aa.MaxIterError:
+                if to_skip_bad:
+                    rejected = True
+                else:
+                    raise Exception("Unable to make star alignment. Try to delete bad images or use --skip_bad key")
         if not rejected:
             loaded_images[num] = img_data
             y_boarders, x_boarders = Dataset.crop_raw(img_data, to_do=False)
@@ -115,8 +119,9 @@ class SourceData:
     X_SPLITS = 3
     Y_SPLITS = 3
 
-    def __init__(self, folder, non_linear=False, num_from_session=0):
-
+    def __init__(self, folder, non_linear=False, num_from_session=0, to_align=True, to_skip_bad=False):
+        self.to_align = to_align
+        self.to_skip_bad = to_skip_bad
         self.imgs_shm = None
         self.y_boarders_shm = None
         self.x_boarders_shm = None
@@ -235,7 +240,7 @@ class SourceData:
             mem_size = mem_size * n
         mem_size = mem_size * 4
         self.imgs_shm = SharedMemory(size=mem_size, create=True)
-        images_shape = (len(file_paths), *img.shape)
+        images_shape = (len(file_paths), *img.shape[:2])
         imgs = np.ndarray(images_shape, dtype='float32', buffer=self.imgs_shm.buf)
 
         self.y_boarders_shm = SharedMemory(size=len(file_paths) * 2 * 2, create=True)
@@ -256,7 +261,9 @@ class SourceData:
                     load_func,
                     non_linear, 
                     progress_queue,
-                    img
+                    img,
+                    self.to_align,
+                    self.to_skip_bad
                 ))
             )
         for proc in processes:
@@ -277,12 +284,17 @@ class SourceData:
 
         if rejected_list:
             imgs = np.delete(imgs, rejected_list, axis=0)
+            x_boaredrs = np.delete(x_boaredrs, rejected_list, axis=0)
+            y_boaredrs = np.delete(y_boaredrs, rejected_list, axis=0)
+
         y_boarders = int(np.max(y_boaredrs[:, 0])), int(np.min(y_boaredrs[:, 1]))
         x_boarders = int(np.max(x_boaredrs[:, 0])), int(np.min(x_boaredrs[:, 1]))
+        print(y_boarders, x_boarders)
         x_left, x_right = x_boarders
         y_top, y_bottom = y_boarders
         imgs = imgs[:, y_top: y_bottom, x_left: x_right]
         imgs = self.chop_imgs(imgs)
+        print(imgs.shape)
         return imgs, timestamps, exposures
 
     def chop_imgs(self, imgs):
@@ -310,12 +322,24 @@ class SourceData:
                               :,
                               y_offset - self.BOARDER_OFFSET: y_offset + y_split_size + self.BOARDER_OFFSET,
                               x_offset - self.BOARDER_OFFSET: x_offset + x_split_size + self.BOARDER_OFFSET]
-                # not_aligned.shape = *not_aligned.shape[:3], 1
-                aligned = np.ndarray((len(self.raw_dataset), y_split_size, x_split_size), dtype='float32')
-                aligned[0] = not_aligned[0, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
-                for num in range(1, len(not_aligned)):
-                    new_img, _ = aa.register(not_aligned[num], aligned[0], fill_value=0, min_area=9)
-                    aligned[num] = new_img
+                if self.to_align:
+                    aligned = np.ndarray((len(self.raw_dataset), y_split_size, x_split_size), dtype='float32')
+                    aligned[0] = not_aligned[0, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
+                    bad = []
+                    for num in range(1, len(not_aligned)):
+                        try:
+                            new_img, _ = aa.register(not_aligned[num], aligned[0], fill_value=0, min_area=9)
+                            aligned[num] = new_img
+                        except aa.MaxIterError:
+                            if self.to_skip_bad:
+                                bad.append(num)
+                            else:
+                                raise Exception(
+                                    "Unable to make star alignment. Try to delete bad images or use --skip_bad key")
+                    if bad:
+                        aligned = np.delete(aligned, bad, axis=0)
+                else:
+                    aligned = not_aligned
 
                 yield aligned, y_offset, x_offset
 

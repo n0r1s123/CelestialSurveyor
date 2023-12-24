@@ -198,7 +198,7 @@ class TrainingDataset(Dataset):
         min_vector = max(min_total_movement / total_time, 0.5)
         max_vector = 50.  # pixels/hour
         vector_len = random.uniform(min_vector, max_vector)
-        movement_angle = random.uniform(0., np.pi)
+        movement_angle = random.uniform(0., 2 * np.pi)
         movement_vector = np.array([np.sin(movement_angle), np.cos(movement_angle)]) * vector_len
 
         # max_vector = 3000
@@ -275,7 +275,7 @@ class TrainingDataset(Dataset):
             self.source_data[dataset_idx].normalized_timestamps] for _ in batch])
         TS_batch = np.swapaxes(TS_batch, 1, 2)
         y_batch = np.array([item[1] for item in batch])
-        return [X_batch, TS_batch], y_batch
+        return [X_batch, X_batch[:, ::3], TS_batch], y_batch
         # return X_batch, y_batch
 
     def batch_generator(self, batch_size):

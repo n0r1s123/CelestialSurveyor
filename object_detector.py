@@ -33,45 +33,42 @@ class Conv2Plus1D(tf.keras.layers.Layer):
 
 # Define your RNN model
 def build_rnn_model(input_shape):
-    image_input = tf.keras.layers.Input(shape=(None, 64, 64, 1))
+    fast_image_input = tf.keras.layers.Input(shape=(None, 64, 64, 1), name='fast_input')
+    slow_image_input = tf.keras.layers.Input(shape=(None, 64, 64, 1), name='slow_input')
     timestamp_input = tf.keras.layers.Input(shape=(None, 2))
 
-    first_part = tf.keras.models.Sequential([
-        tf.keras.layers.Conv3D(filters=32, kernel_size=(3, 3, 3), padding='same',
-               data_format="channels_last"),
-        tf.keras.layers.LeakyReLU(alpha=0.05),
-        tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Conv3D(filters=64, kernel_size=(3, 3, 3), padding='same',
-               data_format="channels_last"),
-        tf.keras.layers.LeakyReLU(alpha=0.05),
-        tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
-        tf.keras.layers.BatchNormalization(),
-        tf.keras.layers.Conv3D(filters=128, kernel_size=(3, 3, 3), padding='same',
-               data_format="channels_last"),
-        tf.keras.layers.LeakyReLU(alpha=0.05),
-        tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
-        tf.keras.layers.BatchNormalization(),
+    fast_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(32, (3, 3), activation='relu'))(fast_image_input)
+    fast_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2)))(fast_rnn)
+    fast_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(64, (3, 3), activation='relu'))(fast_rnn)
+    fast_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2)))(fast_rnn)
+    fast_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(128, (3, 3), activation='relu'))(fast_rnn)
+    fast_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2)))(fast_rnn)
+    fast_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(fast_rnn)
+    image_lstm = tf.keras.layers.LSTM(128, return_sequences=False)(fast_rnn)
 
-        tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten()),
-    ])
+    # Slow modality branch
+    slow_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(32, (3, 3), activation='relu'))(slow_image_input)
+    slow_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2)))(slow_rnn)
+    slow_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(64, (3, 3), activation='relu'))(slow_rnn)
+    slow_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2)))(slow_rnn)
+    slow_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Conv2D(128, (3, 3), activation='relu'))(slow_rnn)
+    slow_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.MaxPooling2D((2, 2)))(slow_rnn)
+    slow_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(slow_rnn)
+    slow_lstm = tf.keras.layers.LSTM(128, return_sequences=False)(slow_rnn)
 
-    second_part = tf.keras.models.Sequential([
-        tf.keras.layers.LSTM(128, return_sequences=True),
-        tf.keras.layers.LSTM(64, return_sequences=False),
-        tf.keras.layers.Dense(128),
-        tf.keras.layers.LeakyReLU(alpha=0.1),
-        tf.keras.layers.Dense(64),
-        tf.keras.layers.LeakyReLU(alpha=0.1),
-        tf.keras.layers.Dense(1, activation='sigmoid')
-    ])
-    image_features = first_part(image_input)
-    combined_features = tf.keras.layers.Concatenate()([image_features, timestamp_input])
-    output = second_part(combined_features)
-    model = tf.keras.models.Model(inputs=[image_input, timestamp_input], outputs=output)
+    timestamp_rnn = tf.keras.layers.LSTM(32, return_sequences=False)(timestamp_input)
+    fused_features = tf.keras.layers.Concatenate()([image_lstm, slow_lstm, timestamp_rnn])
 
-    print(first_part.summary())
-    print(second_part.summary())
+    # Fully connected layers for classification
+    fc1 = tf.keras.layers.Dense(64, activation='relu')(fused_features)
+    output = tf.keras.layers.Dense(1, activation='sigmoid', name='output')(fc1)
+
+    # Create the model
+    model = tf.keras.models.Model(inputs=[fast_image_input, slow_image_input, timestamp_input], outputs=output)
+
+
+    # print(first_part.summary())
+    # print(second_part.summary())
 
     return model
 
@@ -97,7 +94,7 @@ def main():
     print(tf.__version__)
     input_shape = (None, 64, 64, 1)
     load_model_name = "model33"
-    save_model_name = "model33"
+    save_model_name = "model34"
 
 
     # Build the model
@@ -115,9 +112,8 @@ def main():
     dataset = TrainingDataset([
             SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True),
             # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, num_from_session=5),
-            # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
-            SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, num_from_session=15),
-            # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, num_from_session=15),
             SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
             # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, num_from_session=12),
             SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),

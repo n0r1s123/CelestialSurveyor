@@ -113,18 +113,18 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
 
     # Testing
     dataset = Dataset([
-        SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True),
-        SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, num_from_session=5),
-        SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\', non_linear=False),
-        SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
-        SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
-        SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
-        SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True),
-        SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True),
-        SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, is_training=False),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, num_from_session=5),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\', non_linear=False, to_align=True, to_skip_bad=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
         # # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
         # SourceData('D:\\Boris\\astro\\M52\\Light', non_linear=False),
-        # SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False),
+        SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False),
     ])
 
     # # Production
@@ -178,7 +178,7 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
                     ts_pred.append(ts)
 
                 imgs_batch = np.array(imgs_batch)
-                results = model.predict([imgs_batch, np.array(ts_pred)], verbose=0)
+                results = model.predict([imgs_batch, imgs_batch[:, ::3], np.array(ts_pred)], verbose=0)
                 for res, (y, x) in zip(results, coord_batch):
                     if res > 0.8:
                         objects_coords.append((y + y_offset, x + x_offset))
