@@ -123,7 +123,13 @@ class SourceData:
         self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = \
             self.__load_raw_dataset(folder, non_linear, num_from_session)
         normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
-        self.normalized_timestamps = np.array([item / max(normalized_timestamps) for item in normalized_timestamps])
+        new_timestamps = []
+        first_ts = normalized_timestamps[0]
+        for item in normalized_timestamps:
+            if item - first_ts > 14 * 60 * 60:
+                first_ts = item
+            new_timestamps.append(item - first_ts)
+        self.normalized_timestamps = np.array([item / max(new_timestamps) for item in new_timestamps])
         # self.normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
 
         diff_timestamps = np.array(

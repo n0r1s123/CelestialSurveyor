@@ -37,17 +37,17 @@ def build_rnn_model(input_shape):
     timestamp_input = tf.keras.layers.Input(shape=(None, 2))
 
     first_part = tf.keras.models.Sequential([
-        Conv2Plus1D(filters=32, kernel_size=(3, 3, 3), padding='same',
+        tf.keras.layers.Conv3D(filters=32, kernel_size=(3, 3, 3), padding='same',
                data_format="channels_last"),
         tf.keras.layers.LeakyReLU(alpha=0.05),
         tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
         tf.keras.layers.BatchNormalization(),
-        Conv2Plus1D(filters=64, kernel_size=(3, 3, 3), padding='same',
+        tf.keras.layers.Conv3D(filters=64, kernel_size=(3, 3, 3), padding='same',
                data_format="channels_last"),
         tf.keras.layers.LeakyReLU(alpha=0.05),
         tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
         tf.keras.layers.BatchNormalization(),
-        Conv2Plus1D(filters=128, kernel_size=(3, 3, 3), padding='same',
+        tf.keras.layers.Conv3D(filters=128, kernel_size=(3, 3, 3), padding='same',
                data_format="channels_last"),
         tf.keras.layers.LeakyReLU(alpha=0.05),
         tf.keras.layers.MaxPooling3D(pool_size=(1, 2, 2)),
@@ -57,8 +57,8 @@ def build_rnn_model(input_shape):
     ])
 
     second_part = tf.keras.models.Sequential([
-        tf.keras.layers.LSTM(256, return_sequences=False),
-        # tf.keras.layers.LSTM(128, return_sequences=False),
+        tf.keras.layers.LSTM(128, return_sequences=True),
+        tf.keras.layers.LSTM(64, return_sequences=False),
         tf.keras.layers.Dense(128),
         tf.keras.layers.LeakyReLU(alpha=0.1),
         tf.keras.layers.Dense(64),
@@ -96,8 +96,8 @@ def encrypt_model(model_name, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw=
 def main():
     print(tf.__version__)
     input_shape = (None, 64, 64, 1)
-    load_model_name = "model42"
-    save_model_name = "model46"
+    load_model_name = "model33"
+    save_model_name = "model33"
 
 
     # Build the model
@@ -118,7 +118,8 @@ def main():
             # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
             SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, num_from_session=15),
             # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
-            SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, num_from_session=12),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, num_from_session=12),
             SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
             # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, num_from_session=5),
             SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True),
@@ -128,6 +129,7 @@ def main():
             # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
             # SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, num_from_session=5),
             SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True),
+
         ],
         samples_folder='C:\\git\\object_recognition\\star_samples',
     )
