@@ -75,6 +75,9 @@ class TrainingDataset(Dataset):
 
         image[y_slice, x_slice] = np.maximum(
             star[int(cut_top):int(star_y_size - cut_bottom), int(cut_left):int(star_x_size - cut_right)], image_to_correct)
+        # print(image[y_slice, x_slice].shape)
+        # print(star[int(cut_top):int(star_y_size - cut_bottom), int(cut_left):int(star_x_size - cut_right)].shape)
+        # print(image_to_correct.shape)
         return image
 
     def calculate_star_form_on_single_image(cls, image, star, start_coords, movement_vector, exposure_time=None):
@@ -159,7 +162,8 @@ class TrainingDataset(Dataset):
         y_shape, x_shape = imgs[0].shape[:2]
         y = random.randint(0, y_shape - 1)
         x = random.randint(0, x_shape - 1)
-        star_img = random.choice(self.object_samples)
+        # star_img = random.choice(self.object_samples)
+        star_img = self.object_samples[-1]
         star_brightness = np.max(star_img)
         for num, (img, ts) in enumerate(zip(imgs, timestamps)):
             new_phaze = 2 * np.pi * ts / period + starting_phase
@@ -176,76 +180,71 @@ class TrainingDataset(Dataset):
 
     def draw_object_on_image_series_numpy(self, imgs, dataset_idx=0):
         min_total_movement = 5  # px
-
-        drawn = 1
         old_images = np.copy(imgs)
-        result = []
+
         y_shape, x_shape = imgs[0].shape[:2]
+
         star_img = random.choice(self.object_samples)
-        start_image_idx = random.randint(0, len(imgs) - 1)
-        start_y = random.randint(0, y_shape - 1)
-        start_x = random.randint(0, x_shape - 1)
-        object_factor = random.randrange(120, 301) / 300
-        star_max = np.max(star_img)
-        expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
-        multiplier = expected_max / star_max
-        star_img = star_img * multiplier
 
-        # Calculate min and max movement vector length (pixels/hour)
-        total_time = self.source_data[dataset_idx].normalized_timestamps[-1] - \
-                     self.source_data[dataset_idx].normalized_timestamps[0]
-        total_time /= 3600
-        min_vector = max(min_total_movement / total_time, 0.5)
-        max_vector = 50.  # pixels/hour
-        vector_len = random.uniform(min_vector, max_vector)
-        movement_angle = random.uniform(0., 2 * np.pi)
-        movement_vector = np.array([np.sin(movement_angle), np.cos(movement_angle)]) * vector_len
+        drawn = 0
+        while not drawn:
+            result = []
+            start_image_idx = random.randint(0, len(imgs) - 1)
+            start_y = random.randint(0, y_shape - 1)
+            start_x = random.randint(0, x_shape - 1)
+            object_factor = random.randrange(120, 301) / 300
+            star_max = np.max(star_img)
+            expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
+            multiplier = expected_max / star_max
+            star_img = star_img * multiplier
 
-        # max_vector = 3000
-        # min_vector = -3000
-        # divider = 100
-        # choices = list(range(min_vector, 0)) + list(range(1, max_vector))
-        # movement_vector = np.array([random.choice(choices)/divider, random.choice(choices)/divider])
-        time_diff = (self.source_data[dataset_idx].timestamps[-1] - self.source_data[dataset_idx].timestamps[0]
-                     ).total_seconds() / 3600
-        if all(item * time_diff < 1 for item in movement_vector):
-            drawn = 0
-        start_ts = self.source_data[dataset_idx].timestamps[start_image_idx]
+            # Calculate min and max movement vector length (pixels/hour)
+            total_time = (self.source_data[dataset_idx].timestamps[-1] - self.source_data[dataset_idx].timestamps[0]
+                          ).total_seconds()
+            total_time /= 3600
+            min_vector = max(min_total_movement / total_time, 0.5)
+            max_vector = 50.  # pixels/hour
+            vector_len = random.uniform(min_vector, max_vector)
+            movement_angle = random.uniform(0., 2 * np.pi)
+            movement_vector = np.array([np.sin(movement_angle), np.cos(movement_angle)]) * vector_len
 
-        movement_vector = - movement_vector
-        to_beginning_slice = slice(None, start_image_idx)
-        for img, exposure, timestamp in zip(
-                imgs[to_beginning_slice][::-1], self.source_data[dataset_idx].exposures[to_beginning_slice],
-                self.source_data[dataset_idx].timestamps[to_beginning_slice]
-        ):
-            inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
-            y, x = inter_image_movement_vector + np.array([start_y, start_x])
-            new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
-            result.append(new_img)
+            start_ts = self.source_data[dataset_idx].timestamps[start_image_idx]
 
-        result = result[::-1]
+            movement_vector = - movement_vector
+            to_beginning_slice = slice(None, start_image_idx)
+            for img, exposure, timestamp in zip(
+                    imgs[to_beginning_slice][::-1], self.source_data[dataset_idx].exposures[to_beginning_slice][::-1],
+                    self.source_data[dataset_idx].timestamps[to_beginning_slice][::-1]
+            ):
+                inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
+                y, x = inter_image_movement_vector + np.array([start_y, start_x])
+                new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
+                result.append(new_img)
 
-        movement_vector = - movement_vector
+            result = result[::-1]
 
-        to_end_slice = slice(start_image_idx, None, None)
-        for img, exposure, timestamp in zip(
-                imgs[to_end_slice],
-                self.source_data[dataset_idx].exposures[to_end_slice],
-                self.source_data[dataset_idx].timestamps[to_end_slice]
-        ):
-            inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
-            y, x = inter_image_movement_vector + np.array([start_y, start_x])
-            new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
-            result.append(new_img)
-        result = np.array(result)
+            to_end_slice = slice(start_image_idx, None, None)
+            for img, exposure, timestamp in zip(
+                    imgs[to_end_slice],
+                    self.source_data[dataset_idx].exposures[to_end_slice],
+                    self.source_data[dataset_idx].timestamps[to_end_slice]
+            ):
+                inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
+                y, x = inter_image_movement_vector + np.array([start_y, start_x])
+                new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, exposure)
+                result.append(new_img)
+            result = np.array(result)
 
-        if (result == old_images).all():
-            drawn = 0
+            drawn = 1
+            if (result == old_images).all():
+                drawn = 0
+        if not drawn:
+            print("not_drawn")
         return result, drawn
 
     def make_series(self, dataset_idx=0):
         imgs = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
-        if random.randint(1, 101) > 60:
+        if random.randint(1, 101) > 70:
             what_to_draw = random.randrange(0, 100)
             if what_to_draw < 200:
                 imgs, drawn = self.draw_object_on_image_series_numpy(imgs, dataset_idx=dataset_idx)
@@ -257,16 +256,16 @@ class TrainingDataset(Dataset):
             res = 0
 
         # if res == 0:
-        if random.randint(0, 100) >= 90:
+        if random.randint(0, 100) >= 80:
             imgs = self.draw_one_image_artefact(imgs)
-        if random.randint(0, 100) >= 90:
+        if random.randint(0, 100) >= 80:
             imgs = self.draw_hot_pixels(imgs)
 
         imgs = self.prepare_images(imgs)
         result = imgs, np.array([res])
         return result
 
-    def make_batch(self, batch_size):
+    def make_batch(self, batch_size, save=False):
         dataset_idx = random.randrange(0, len(self.source_data))
         batch = [self.make_series(dataset_idx) for _ in range(batch_size)]
         X_batch = np.array([item[0] for item in batch])
@@ -275,9 +274,25 @@ class TrainingDataset(Dataset):
             self.source_data[dataset_idx].normalized_timestamps] for _ in batch])
         TS_batch = np.swapaxes(TS_batch, 1, 2)
         y_batch = np.array([item[1] for item in batch])
-        return [X_batch, X_batch[:, ::3], TS_batch], y_batch
+
+        if save:
+            for num, (bla_imgs, res) in enumerate(zip(X_batch, y_batch)):
+                bla_imgs.shape = bla_imgs.shape[:3]
+                bla_imgs = bla_imgs * 256
+                new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in bla_imgs]
+                new_frames[0].save(
+                    f"{num}_{res[0]}.gif",
+                    save_all=True,
+                    append_images=new_frames[1:],
+                    duration=200,
+                    loop=0)
+        # return [X_batch, TS_batch, X_batch[:, ::10], TS_batch[:, ::10]], y_batch
+        return [X_batch, TS_batch], y_batch
+        # return [X_batch, X_batch[:, ::4], TS_batch], y_batch
         # return X_batch, y_batch
 
     def batch_generator(self, batch_size):
+        bla = True
         while True:
-            yield self.make_batch(batch_size)
+            yield self.make_batch(batch_size, bla)
+            bla = False

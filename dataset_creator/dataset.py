@@ -339,7 +339,7 @@ class SourceData:
                     if bad:
                         aligned = np.delete(aligned, bad, axis=0)
                 else:
-                    aligned = not_aligned
+                    aligned = not_aligned[:, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
 
                 yield aligned, y_offset, x_offset
 

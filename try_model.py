@@ -115,7 +115,7 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
     dataset = Dataset([
         # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, is_training=False),
         # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, num_from_session=5),
-        # SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\', non_linear=False, to_align=True, to_skip_bad=True),
+        SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\', non_linear=True, to_align=False, to_skip_bad=False),
         # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
         # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
         # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
@@ -124,7 +124,7 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
         # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
         # # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
         # SourceData('D:\\Boris\\astro\\M52\\Light', non_linear=False),
-        SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False),
+        # SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=20),
     ])
 
     # # Production
@@ -152,18 +152,19 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
         objects_coords = []
 
         splits = source_data.gen_splits()
+        # splits = [(source_data.raw_dataset, 0, 0)]
         for imgs, y_offset, x_offset in splits:
             ys = np.arange(0, imgs[0].shape[0], 64)
-            ys[-1] = imgs[0].shape[0] - 64 - 1
+            ys[-1] = imgs[0].shape[0] - 64 - source_data.BOARDER_OFFSET - 1
+            # ys = ys[:-1]
 
             xs = np.arange(0, imgs[0].shape[1], 64)
-            xs[-1] = imgs[0].shape[1] - 64 - 1
+            # xs = xs[:-1]
+            xs[-1] = imgs[0].shape[1] - 64 - source_data.BOARDER_OFFSET - 1
             coords = np.array([np.array([y, x]) for y in ys for x in xs])
             number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
             coord_batches = np.array_split(coords, number_of_batches, axis=0)
             total_len = len(coord_batches)
-
-
             ts_diff = dataset.source_data[num].diff_timestamps
             ts_norm = dataset.source_data[num].normalized_timestamps
             ts = np.array(list(zip(ts_diff, ts_norm)))
@@ -178,7 +179,8 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
                     ts_pred.append(ts)
 
                 imgs_batch = np.array(imgs_batch)
-                results = model.predict([imgs_batch, imgs_batch[:, ::3], np.array(ts_pred)], verbose=0)
+                results = model.predict([imgs_batch, np.array(ts_pred)], verbose=0)
+                # results = model.predict([imgs_batch, np.array(ts_pred), imgs_batch[:, ::3], np.array(ts_pred)[:, ::3]], verbose=0)
                 for res, (y, x) in zip(results, coord_batch):
                     if res > 0.8:
                         objects_coords.append((y + y_offset, x + x_offset))
