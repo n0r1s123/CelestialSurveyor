@@ -133,8 +133,8 @@ def encrypt_model(model_name, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw=
 def main():
     print(tf.__version__)
     input_shape = (None, 64, 64, 1)
-    load_model_name = "model42"
-    save_model_name = "model43"
+    load_model_name = "model43"
+    save_model_name = "model44"
 
 
     # Build the model

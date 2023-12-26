@@ -124,7 +124,7 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
         # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
         # # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
         # SourceData('D:\\Boris\\astro\\M52\\Light', non_linear=False),
-        # SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=20),
+        SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=30),
     ])
 
     # # Production

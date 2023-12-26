@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image
 
 from .dataset import Dataset
+from .dataset import SourceData
 
 
 class TrainingDataset(Dataset):
@@ -242,6 +243,38 @@ class TrainingDataset(Dataset):
             print("not_drawn")
         return result, drawn
 
+    @classmethod
+    def gen_timestamps(cls, num_timestamps):
+        max_sessions_num = min(num_timestamps // 5 + 1, 4)
+        sessions_num = random.randrange(1, max_sessions_num + 1)
+        exposures = (0.25, 0.5, *tuple(range(1, 11)))
+        exposure = random.choice(exposures) * 60
+
+        # Initialize an empty list to store the chosen numbers
+        session_lens = []
+
+        # Choose the first number randomly
+        if sessions_num > 1:
+            session_lens.append(random.randint(0, num_timestamps - 3 * sessions_num))
+            # Choose subsequent numbers with at least a 3-number interval
+            for bla in range(1, sessions_num - 1):
+                session_lens.append(random.randint(session_lens[-1] + 3, num_timestamps - 3 * (sessions_num - bla)))
+
+        session_lens.append(num_timestamps)
+        session_lens = [session_lens[i] - session_lens[i - 1] if i >= 1 else session_lens[i] for i in
+                        range(len(session_lens))]
+
+        max_inter_exposure = 20 * 60  # 20 minutes
+        timestamps = []
+        for se_num, session_len in enumerate(session_lens):
+            for num in range(session_len):
+                if num == 0:
+                    timestamps.append(se_num * random.randrange(15) * 24 * 3600)  # maximum 15 days between sessions
+                    continue
+                next_timestamp = timestamps[-1] + exposure + random.randrange(1, max_inter_exposure + 1)
+                timestamps.append(next_timestamp)
+        return timestamps
+
     def make_series(self, dataset_idx=0):
         imgs = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
         if random.randint(1, 101) > 70:
@@ -269,9 +302,11 @@ class TrainingDataset(Dataset):
         dataset_idx = random.randrange(0, len(self.source_data))
         batch = [self.make_series(dataset_idx) for _ in range(batch_size)]
         X_batch = np.array([item[0] for item in batch])
-        TS_batch = np.array([[
-            self.source_data[dataset_idx].diff_timestamps,
-            self.source_data[dataset_idx].normalized_timestamps] for _ in batch])
+
+        # Generate timestamps for each image series in batch
+        TS_batch = np.array([SourceData.normalize_timestamps(
+            self.gen_timestamps(len(self.source_data[dataset_idx].raw_dataset))
+        ) for _ in batch])
         TS_batch = np.swapaxes(TS_batch, 1, 2)
         y_batch = np.array([item[1] for item in batch])
 

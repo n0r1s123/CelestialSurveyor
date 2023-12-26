@@ -127,24 +127,25 @@ class SourceData:
         self.x_boarders_shm = None
         self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = \
             self.__load_raw_dataset(folder, non_linear, num_from_session)
-        normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
+        timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
+        self.normalized_timestamps, self.diff_timestamps = self.normalize_timestamps(timestamps)
+
+    @classmethod
+    def normalize_timestamps(cls, timestamps):
         new_timestamps = []
-        first_ts = normalized_timestamps[0]
-        for item in normalized_timestamps:
+        first_ts = timestamps[0]
+        for item in timestamps:
             if item - first_ts > 14 * 60 * 60:
                 first_ts = item
             new_timestamps.append(item - first_ts)
-        self.normalized_timestamps = np.array([item / max(new_timestamps) for item in new_timestamps])
-        # self.normalized_timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
+        normalized_timestamps = np.array([item / max(new_timestamps) for item in new_timestamps])
 
         diff_timestamps = np.array(
-            [(self.timestamps[i] - self.timestamps[i-1 if i-1 >= 0 else 0]
-              ).total_seconds() for i in range(len(self.timestamps))])
-        self.diff_timestamps = (diff_timestamps - np.min(diff_timestamps)
-                                ) / (np.max(diff_timestamps) - np.min(diff_timestamps))
-        # self.diff_timestamps = np.array(
-        #     [(self.timestamps[i] - self.timestamps[i-1 if i-1 >= 0 else 0]
-        #       ).total_seconds() for i in range(len(self.timestamps))])
+            [timestamps[i] - timestamps[i - 1 if i - 1 >= 0 else 0] for i in range(len(timestamps))])
+        diff_timestamps = (
+            diff_timestamps - np.min(diff_timestamps)) / (np.max(diff_timestamps) - np.min(diff_timestamps))
+        return normalized_timestamps, diff_timestamps
+
 
     def __load_raw_dataset(self, folder, non_linear=False, num_from_session=0):
         raw_dataset, all_timestamps, all_exposures = self.crop_folder_on_the_fly(
