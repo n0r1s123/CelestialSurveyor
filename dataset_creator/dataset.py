@@ -98,7 +98,7 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
         if to_align:
             try:
                 img_data, _ = aa.register(img_data, reference_image, fill_value=0)
-            except aa.MaxIterError:
+            except (aa.MaxIterError, ValueError):
                 if to_skip_bad:
                     rejected = True
                 else:
@@ -116,8 +116,8 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
 
 class SourceData:
     BOARDER_OFFSET = 10
-    X_SPLITS = 3
-    Y_SPLITS = 3
+    X_SPLITS = 1
+    Y_SPLITS = 1
 
     def __init__(self, folder, non_linear=False, num_from_session=0, to_align=True, to_skip_bad=False):
         self.to_align = to_align
@@ -127,11 +127,12 @@ class SourceData:
         self.x_boarders_shm = None
         self.raw_dataset, self.exposures, self.timestamps, self.img_shape, self.exclusion_boxes = \
             self.__load_raw_dataset(folder, non_linear, num_from_session)
-        timestamps = [(item - min(self.timestamps)).total_seconds() for item in self.timestamps]
-        self.normalized_timestamps, self.diff_timestamps = self.normalize_timestamps(timestamps)
+
+        self.normalized_timestamps, self.diff_timestamps = self.normalize_timestamps(self.timestamps)
 
     @classmethod
     def normalize_timestamps(cls, timestamps):
+        timestamps = [(item - min(timestamps)).total_seconds() for item in timestamps]
         new_timestamps = []
         first_ts = timestamps[0]
         for item in timestamps:

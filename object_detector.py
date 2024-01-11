@@ -133,11 +133,12 @@ def encrypt_model(model_name, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw=
 def main():
     print(tf.__version__)
     input_shape = (None, 64, 64, 1)
-    load_model_name = "model43"
-    save_model_name = "model44"
+    load_model_name = "model51"
+    save_model_name = "model52"
 
 
     # Build the model
+
 
     # Compile the model
     # model = build_rnn_model(input_shape)
@@ -152,20 +153,20 @@ def main():
     dataset = TrainingDataset([
             # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, to_align=False),
             # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, num_from_session=5),
-            # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, to_align=False),
-            SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, num_from_session=10, to_align=False),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, to_align=False, num_from_session=25),
+            SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, to_align=False),
             # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, to_align=False),
             # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, num_from_session=10, to_align=False),
             SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, to_align=False),
-            SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, num_from_session=5),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, num_from_session=5),
             SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True, to_align=False),
-            SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, to_align=False),
-            SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, num_from_session=5),
-            SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True, to_align=False),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, to_align=False),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, num_from_session=5),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True, to_align=False),
             # # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
-            # # SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, num_from_session=5),
-            SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False),
-            SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=20),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, num_from_session=5),
+            # SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False),
+            # SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=20),
 
         ],
         samples_folder='C:\\git\\object_recognition\\star_samples',
@@ -177,7 +178,7 @@ def main():
     early_stopping_monitor = tf.keras.callbacks.EarlyStopping(
         monitor='val_loss',
         min_delta=0,
-        patience=15,
+        patience=4,
         verbose=1,
         mode='min',
         baseline=None,

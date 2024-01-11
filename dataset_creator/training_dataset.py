@@ -1,3 +1,5 @@
+import datetime
+
 import os
 import random
 import numpy as np
@@ -245,7 +247,7 @@ class TrainingDataset(Dataset):
 
     @classmethod
     def gen_timestamps(cls, num_timestamps):
-        max_sessions_num = min(num_timestamps // 5 + 1, 4)
+        max_sessions_num = min((num_timestamps - 5) // 5 + 1, 4)
         sessions_num = random.randrange(1, max_sessions_num + 1)
         exposures = (0.25, 0.5, *tuple(range(1, 11)))
         exposure = random.choice(exposures) * 60
@@ -255,10 +257,10 @@ class TrainingDataset(Dataset):
 
         # Choose the first number randomly
         if sessions_num > 1:
-            session_lens.append(random.randint(0, num_timestamps - 3 * sessions_num))
+            session_lens.append(random.randrange(0, num_timestamps - 3 * sessions_num))
             # Choose subsequent numbers with at least a 3-number interval
             for bla in range(1, sessions_num - 1):
-                session_lens.append(random.randint(session_lens[-1] + 3, num_timestamps - 3 * (sessions_num - bla)))
+                session_lens.append(random.randrange(session_lens[-1] + 3, num_timestamps - 3 * (sessions_num - bla)))
 
         session_lens.append(num_timestamps)
         session_lens = [session_lens[i] - session_lens[i - 1] if i >= 1 else session_lens[i] for i in
@@ -273,9 +275,13 @@ class TrainingDataset(Dataset):
                     continue
                 next_timestamp = timestamps[-1] + exposure + random.randrange(1, max_inter_exposure + 1)
                 timestamps.append(next_timestamp)
+
+        timestamps = [datetime.datetime.now() + datetime.timedelta(seconds=item) for item in timestamps]
         return timestamps
 
     def make_series(self, dataset_idx=0):
+        timestamps = self.gen_timestamps(len(self.source_data[dataset_idx].raw_dataset))
+        self.source_data[dataset_idx].timestamps = timestamps
         imgs = self.get_shrinked_img_series(*self.get_random_shrink(dataset_idx), dataset_idx=dataset_idx)
         if random.randint(1, 101) > 70:
             what_to_draw = random.randrange(0, 100)
@@ -295,20 +301,18 @@ class TrainingDataset(Dataset):
             imgs = self.draw_hot_pixels(imgs)
 
         imgs = self.prepare_images(imgs)
-        result = imgs, np.array([res])
+
+        normalized_timestamps, diff_timestamps = SourceData.normalize_timestamps(timestamps)
+        result = imgs, normalized_timestamps, diff_timestamps, np.array([res])
         return result
 
     def make_batch(self, batch_size, save=False):
         dataset_idx = random.randrange(0, len(self.source_data))
         batch = [self.make_series(dataset_idx) for _ in range(batch_size)]
         X_batch = np.array([item[0] for item in batch])
-
-        # Generate timestamps for each image series in batch
-        TS_batch = np.array([SourceData.normalize_timestamps(
-            self.gen_timestamps(len(self.source_data[dataset_idx].raw_dataset))
-        ) for _ in batch])
+        TS_batch = np.array([[item[2], item[1]] for item in batch])
         TS_batch = np.swapaxes(TS_batch, 1, 2)
-        y_batch = np.array([item[1] for item in batch])
+        y_batch = np.array([item[3] for item in batch])
 
         if save:
             for num, (bla_imgs, res) in enumerate(zip(X_batch, y_batch)):

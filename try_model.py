@@ -1,4 +1,5 @@
 import os
+import wx
 
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -9,6 +10,8 @@ from dataset_creator.dataset import Dataset, SourceData
 import tensorflow as tf
 tf.get_logger().setLevel('FATAL')
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('TkAgg')
 from matplotlib.patches import Rectangle
 import numpy as np
 from PIL import Image
@@ -18,6 +21,7 @@ from io import BytesIO
 import h5py
 import argparse
 import warnings
+from typing import Optional
 warnings.filterwarnings("ignore")
 
 def get_model_path():
@@ -103,7 +107,7 @@ def decrypt_model(encrypted_model_path, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl
     return loaded_model
 
 
-def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear):
+def main(source_folder, output_folder, model_path, non_linear, ui_progress_bar: Optional[wx.Gauge] = None):
     if not os.path.exists(source_folder):
         raise ValueError(f"Path '{source_folder}' doesn't exist. Please check the path specified")
     if not os.path.exists(output_folder):
@@ -113,18 +117,23 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
 
     # Testing
     dataset = Dataset([
-        # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, is_training=False),
+        SourceData(source_folder, non_linear=non_linear, to_skip_bad=True),
+
+        # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True),
         # SourceData('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, num_from_session=5),
-        SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\', non_linear=True, to_align=False, to_skip_bad=False),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped\\', non_linear=True, to_align=False, to_skip_bad=False, num_from_session=8),
         # SourceData('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True),
         # SourceData('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True),
-        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True),
-        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True),
-        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True),
-        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, to_align=False),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True, to_align=False),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, to_align=False),
+        # SourceData('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True, to_align=False),
         # # SourceData('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True),
-        # SourceData('D:\\Boris\\astro\\M52\\Light', non_linear=False),
-        SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=30),
+        # SourceData('D:\\Boris\\astro\\Veil\\Light\\Part_1', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=20),
+        # SourceData('D:\\Boris\\astro\\HelpingHand\\Light', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=30),
+        # SourceData('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, to_skip_bad=False),
+        # SourceData('D:\\Boris\\astro\\M31_2\\Light', non_linear=False, to_align=True, to_skip_bad=False, num_from_session=30),
+        # SourceData('D:\\Boris\\astro\\Leonard', non_linear=False, to_align=True, to_skip_bad=False),
     ])
 
     # # Production
@@ -152,8 +161,9 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
         objects_coords = []
 
         splits = source_data.gen_splits()
-        # splits = [(source_data.raw_dataset, 0, 0)]
+        progress_bar = None
         for imgs, y_offset, x_offset in splits:
+
             ys = np.arange(0, imgs[0].shape[0], 64)
             ys[-1] = imgs[0].shape[0] - 64 - source_data.BOARDER_OFFSET - 1
             # ys = ys[:-1]
@@ -162,13 +172,16 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
             # xs = xs[:-1]
             xs[-1] = imgs[0].shape[1] - 64 - source_data.BOARDER_OFFSET - 1
             coords = np.array([np.array([y, x]) for y in ys for x in xs])
+
             number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
+            progress_bar_len = number_of_batches * source_data.Y_SPLITS * source_data.X_SPLITS
+            progress_bar = tqdm.tqdm(total=progress_bar_len) if progress_bar is None else progress_bar
+            if ui_progress_bar:
+                ui_progress_bar.SetRange(progress_bar_len)
             coord_batches = np.array_split(coords, number_of_batches, axis=0)
-            total_len = len(coord_batches)
             ts_diff = dataset.source_data[num].diff_timestamps
             ts_norm = dataset.source_data[num].normalized_timestamps
             ts = np.array(list(zip(ts_diff, ts_norm)))
-            progress_bar = tqdm.tqdm(total=total_len)
             for coord_batch in coord_batches:
                 imgs_batch = []
                 ts_pred = []
@@ -180,25 +193,30 @@ def main(source_folder, output_folder, model_path, hide_unconfirmed, non_linear)
 
                 imgs_batch = np.array(imgs_batch)
                 results = model.predict([imgs_batch, np.array(ts_pred)], verbose=0)
-                # results = model.predict([imgs_batch, np.array(ts_pred), imgs_batch[:, ::3], np.array(ts_pred)[:, ::3]], verbose=0)
                 for res, (y, x) in zip(results, coord_batch):
-                    if res > 0.8:
-                        objects_coords.append((y + y_offset, x + x_offset))
+                    if res > 0.9:
+                        objects_coords.append((y + y_offset, x + x_offset, res))
                 progress_bar.update()
+                if ui_progress_bar:
+                    ui_progress_bar.SetValue(ui_progress_bar.GetValue() + 1)
+        progress_bar.close()
 
         gif_size = 5
         processed = []
         print(objects_coords)
-        for coord_num, (y, x) in enumerate(objects_coords):
+        for coord_num, (y, x, probability) in enumerate(objects_coords):
             # confirmed = confirm_prediction(model, dataset=dataset, y=y, x=x, dataset_num=num)
             # if hide_unconfirmed and not confirmed:
             #     continue
             # color = 'green' if confirmed else 'yellow'
+            probability = probability[0]
+            color = "yellow" if probability <= 0.95 else "green"
             plt.gca().add_patch(Rectangle((x, y), 64, 64,
-                                          # edgecolor=color,
-                                          edgecolor='green',
+                                          edgecolor=color,
+                                          # edgecolor='green',
                                           facecolor='none',
                                           lw=4))
+            plt.text(x, y - 10, "{:.2f}".format(probability), color="red", fontsize=20)
             for y_pr, x_pr in processed:
                 if x_pr - (gif_size // 2) * 64 <= x <= x_pr + (gif_size // 2) * 64 and \
                         y_pr - (gif_size // 2) * 64 <= y <= y_pr + (gif_size // 2) * 64:
@@ -244,8 +262,6 @@ if __name__ == '__main__':
                             help='Path to the folder where results will be stored')
     arg_parser.add_argument('-m', '--model_path', dest='model_path', type=str, default="default",
                             help='Path to the AI model file')
-    arg_parser.add_argument('-u', '--hide_unconfirmed', dest='hide_unconfirmed', action="store_true",
-                            help='Path to the folder where results will be stored')
     arg_parser.add_argument('-n', '--non_linear', dest='non_linear', action="store_true",
                             help='Provide this key if the images are not in linear state')
     arg_parser.add_argument('-v', '--version', dest='version', action="store_true",
@@ -258,6 +274,5 @@ if __name__ == '__main__':
             source_folder=provided_args.source_folder,
             output_folder=provided_args.output_folder,
             model_path=provided_args.model_path,
-            hide_unconfirmed=provided_args.hide_unconfirmed,
             non_linear=provided_args.non_linear,
         )
