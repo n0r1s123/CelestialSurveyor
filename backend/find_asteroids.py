@@ -16,11 +16,23 @@ import tensorflow as tf
 from PIL import Image
 
 from .source_data import SourceData
+from .progress_bar import AbstractProgressBar
+
+from logger.logger import get_logger
+
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
+logger = get_logger()
 
-def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits, x_splits, secondary_alignment: bool, progress_bar: Optional[wx.Gauge] = None):
-    model_path = get_model_path()
+
+def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits, x_splits, secondary_alignment: bool, progress_bar: Optional[AbstractProgressBar] = None, model_path="default"):
+    if use_img_mask is None:
+        use_img_mask = [True for _ in range(len(source_data.images))]
+
+    model_path = get_model_path() if model_path == "default" else model_path
+    logger.log.debug(f"Loading model: {model_path}")
     model = decrypt_model(model_path)
     batch_size = 10
 
@@ -28,9 +40,9 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
         y_splits = 1
         x_splits = 1
     source_data.chop_imgs(y_splits=y_splits, x_splits=x_splits)
-    splits = source_data.gen_splits(y_splits, x_splits, secondary_alignment)
+    splits = source_data.gen_splits(y_splits, x_splits, secondary_alignment, use_img_mask)
     objects_coords = []
-    for imgs, y_offset, x_offset in splits:
+    for imgs, y_offset, x_offset, use_img_mask in splits:
         ys = np.arange(0, imgs[0].shape[0], 64)
         ys[-1] = imgs[0].shape[0] - 64 - source_data.BOARDER_OFFSET - 1
 
@@ -42,7 +54,7 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
         progress_bar_len = number_of_batches * y_splits * x_splits
 
         if progress_bar:
-            progress_bar.SetRange(progress_bar_len)
+            progress_bar.set_total(progress_bar_len)
         coord_batches = np.array_split(coords, number_of_batches, axis=0)
 
         for coord_batch in coord_batches:
@@ -68,7 +80,7 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                 if res > 0.9:
                     objects_coords.append((y + y_offset, x + x_offset, res))
             if progress_bar:
-                progress_bar.SetValue(progress_bar.GetValue() + 1)
+                progress_bar.update()
 
     ########
     # Save results

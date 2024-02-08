@@ -1,7 +1,7 @@
 import os
 
 import tensorflow as tf
-from backend.source_data import SourceData
+from backend.source_data import SourceData, get_file_paths
 from training_dataset import TrainingDataset
 from model_builder import build_rnn_model, encrypt_model
 from collections import namedtuple
@@ -9,26 +9,21 @@ from logger.logger import Logger
 logger = Logger()
 
 
-folder_properties = namedtuple("folder_properties", ("folder", "non_linear", "to_align", "num_from_session"))
-
-
-
-def get_file_paths(folder):
-    return [os.path.join(folder, item) for item in os.listdir(folder) if item.lower().endswith(".xisf") or item.lower().endswith(".fit") or item.lower().endswith(".fits")]
+folder_properties = namedtuple("folder_properties", ("folder", "non_linear", "to_align", "num_from_session", "debayer"), defaults=(True, False, None, False))
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 def main():
     logger.log.info(tf.__version__)
     input_shape = (None, 64, 64, 1)
-    load_model_name = "model52"
-    save_model_name = "model53"
-
+    load_model_name = "model57"
+    save_model_name = "model58"
 
     # Build the model
 
-
     # Compile the model
-    # model = build_rnn_model(input_shape)
+    # model = build_rnn_model()
     # model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
     # Load model
@@ -38,21 +33,24 @@ def main():
 
     folders = [
         # folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
-        # folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, to_align=False, num_from_session=5),
-        # folder_properties('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, to_align=False, num_from_session=25),
-        # folder_properties('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, to_align=False, num_from_session=None),
-        # folder_properties('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, to_align=False, num_from_session=3),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, to_align=False, num_from_session=2),
+        # # folder_properties('C:\\Users\\bsolomin\\Astro\\Iris_2023\\Pix\\cropped', non_linear=True, to_align=False, num_from_session=None),
+        # # folder_properties('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\Andromeda\\Pix_600\\cropped\\', non_linear=True, to_align=False, num_from_session=10),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, to_align=False, num_from_session=None),
-        # folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, to_align=False, num_from_session=5),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1\\', non_linear=True, to_align=False, num_from_session=3),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
-        # folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, to_align=False, num_from_session=5),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped\\', non_linear=True, to_align=False, num_from_session=2),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
-        # folder_properties('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False, num_from_session=5),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\M81\\cropped\\', non_linear=True, to_align=False, num_from_session=2),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False, num_from_session=5),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False, num_from_session=3),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False, num_from_session=7),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False, num_from_session=None),
-        # folder_properties('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, num_from_session=20),
+        # # folder_properties('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True, num_from_session=20),
+        folder_properties('D:\\Boris\\astro\\Veil\\Light\\Part_2', non_linear=False, to_align=True, debayer=True, num_from_session=20),
     ]
     source_datas = []
     for item in folders:
@@ -63,6 +61,7 @@ def main():
             to_align=item.to_align,
             num_from_session=item.num_from_session,
             to_skip_bad=True,
+            to_debayer=item.debayer
         ))
 
     dataset = TrainingDataset(source_datas)

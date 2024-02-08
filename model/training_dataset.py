@@ -4,13 +4,15 @@ import os
 import random
 import sys
 import numpy as np
+import tqdm
 
 from collections.abc import Sequence
 from PIL import Image
 
 from backend.source_data import SourceData
-from logger.logger import Logger
-logger = Logger()
+from logger.logger import get_logger
+from backend.progress_bar import ProgressBarFactory
+logger = get_logger()
 
 
 class TrainingDataset:
@@ -22,7 +24,7 @@ class TrainingDataset:
         self.star_samples = self.__load_star_samples()
         for item in self.source_datas:
             item.load_headers_and_sort()
-            item.load_images()
+            item.load_images(progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()), to_debayer=item.to_debayer)
             item.load_exclusion_boxes()
 
     @classmethod
@@ -258,7 +260,7 @@ class TrainingDataset:
 
     @classmethod
     def gen_timestamps(cls, num_timestamps):
-        max_sessions_num = min((num_timestamps - 5) // 5 + 1, 4)
+        max_sessions_num = min((num_timestamps - 1) // 2 + 1, 4)
         sessions_num = random.randrange(1, max_sessions_num + 1)
         exposures = (0.25, 0.5, *tuple(range(1, 11)))
         exposure = random.choice(exposures) * 60
@@ -268,10 +270,11 @@ class TrainingDataset:
 
         # Choose the first number randomly
         if sessions_num > 1:
-            session_lens.append(random.randrange(0, num_timestamps - 3 * sessions_num))
+            bla_num = 1
+            session_lens.append(random.randrange(0, num_timestamps - bla_num * sessions_num))
             # Choose subsequent numbers with at least a 3-number interval
             for bla in range(1, sessions_num - 1):
-                session_lens.append(random.randrange(session_lens[-1] + 3, num_timestamps - 3 * (sessions_num - bla)))
+                session_lens.append(random.randrange(session_lens[-1] + bla_num, num_timestamps - bla_num * (sessions_num - bla)))
 
         session_lens.append(num_timestamps)
         session_lens = [session_lens[i] - session_lens[i - 1] if i >= 1 else session_lens[i] for i in
@@ -295,7 +298,7 @@ class TrainingDataset:
         timestamps = self.gen_timestamps(len(source_data.images))
 
         imgs = SourceData.get_shrinked_img_series(source_data.images, *self.get_random_shrink(source_data_idx))
-        if random.randint(1, 101) > 70:
+        if random.randint(1, 101) > 50:
             what_to_draw = random.randrange(0, 100)
             if what_to_draw < 200:
                 imgs, drawn = self.draw_object_on_image_series_numpy(imgs, timestamps, source_data_idx)
