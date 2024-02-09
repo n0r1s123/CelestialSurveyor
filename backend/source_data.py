@@ -153,6 +153,7 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
                 return
             rejected = False
             img_data, _, _ = load_func(fp, non_linear, load_image=True, to_debayer=to_debayer, master_dark=master_dark)
+            img_data += ALIGNMENT_OFFSET
             if to_align:
                 try:
                     img_data, _ = aa.register(img_data, reference_image, fill_value=0)
@@ -162,13 +163,12 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
                     else:
                         raise Exception("Unable to make star alignment. Try to delete bad images or use --skip_bad key")
             if not rejected:
-                if not non_linear:
-                    img_data = stretch_image(img_data)
-                img_data += ALIGNMENT_OFFSET
                 y_boarders, x_boarders = SourceData.crop_raw(img_data, to_do=False)
                 y_boarders, x_boarders = SourceData.crop_fine(
                     img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
                 img_data -= ALIGNMENT_OFFSET
+                if not non_linear:
+                    img_data = stretch_image(img_data)
 
 
                 y_boar[num] = np.array(y_boarders, dtype="uint16")

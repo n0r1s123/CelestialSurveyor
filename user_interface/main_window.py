@@ -1,4 +1,6 @@
 # import os
+import os.path
+
 import wx
 # import numpy as np
 from ObjectListView import ObjectListView, ColumnDefn
@@ -97,7 +99,7 @@ class MyFrame(wx.Frame):
         # Create the controls area (1/6 of window width)
         controls_sizer = wx.BoxSizer(wx.VERTICAL)
 
-        controls_label = wx.StaticText(self.panel, label="Controls:")
+        controls_label = wx.StaticText(self.panel)
         dark_label = wx.StaticText(self.panel, label="Select folder with dark frames")
         self.dark_path_picker = wx.DirPickerCtrl(self.panel, style=wx.DIRP_USE_TEXTCTRL)
         self.btn_add_files = wx.Button(self.panel, label="Add files")
@@ -154,13 +156,13 @@ class MyFrame(wx.Frame):
         hbox.Add(controls_sizer, 1, wx.EXPAND | wx.ALL, 5)
 
         # Create the checkbox list area (2/6 of window width) using ObjectListView
-        checkbox_label = wx.StaticText(self.panel, label="Checkbox List:")
+        checkbox_label = wx.StaticText(self.panel)
         self.checkbox_list = ObjectListView(self.panel, style=wx.LC_REPORT | wx.SUNKEN_BORDER)
         self.checkbox_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_item_selected)
         columns = [
-            ColumnDefn("Item", "left", 150, "file_path"),
-            ColumnDefn("Timestamp", "left", 100, "timestamp"),
-            ColumnDefn("Exposure", "left", 100, "exposure"),
+            ColumnDefn("Item", "left", 350, "file_path"),
+            ColumnDefn("Timestamp", "left", 130, "timestamp"),
+            ColumnDefn("Exposure", "left", 60, "exposure"),
         ]
 
         self.checkbox_list.SetColumns(columns)
@@ -220,6 +222,16 @@ class MyFrame(wx.Frame):
     def OnExit(self, event):
         self.Close()
 
+    def _gen_short_file_names(self, file_list):
+        folders = {os.path.split(fp)[0] for fp in file_list}
+        split = os.path.split
+        if len(folders) == 1:
+            short_file_names = [split(fp)[1] for fp in file_list]
+        else:
+            short_file_names = [os.path.join(split(split(fp)[0])[1], split(fp)[1]) for fp in file_list]
+        return short_file_names
+
+
     def on_add_files(self, event):
         wildcard = "Fits files (*.fits)|*.fits;*.FITS;*.fit;*.FIT|XISF files (*.xisf)|*.xisf;*.XISF|All files (*.*)|*.*"
 
@@ -237,17 +249,17 @@ class MyFrame(wx.Frame):
                 self.source_data = SourceData(paths)
             self.source_data.load_headers_and_sort()
             self.checkbox_list.SetObjects([])
-            self.checkbox_list.Refresh()
-            self.checkbox_list.AddObjects([
+            short_file_paths = self._gen_short_file_names([item[0] for item in self.source_data.timestamped_file_list])
+            self.checkbox_list.SetObjects([
                 MyDataObject(
                     fp, timestamp, exposure, checked=True
-                ) for fp, timestamp, exposure in self.source_data.timestamped_file_list
+                ) for fp, (_, timestamp, exposure) in zip(short_file_paths, self.source_data.timestamped_file_list)
             ])
             objects = self.checkbox_list.GetObjects()
             for obj in objects:
                 self.checkbox_list.SetCheckState(obj, True)
             self.checkbox_list.RefreshObjects(objects)
-
+            # self.checkbox_list.Refresh()
         dialog.Destroy()
         self.progress_bar.SetValue(0)
         self.process_progress_bar.SetValue(0)
@@ -258,12 +270,10 @@ class MyFrame(wx.Frame):
             self.to_debayer.Enable(True)
             self.chk_non_linear.Enable(True)
 
-
     def on_load_files(self, event):
         logger.log.debug("Loading files is initialized by user")
         new_timestamped_file_list = []
         objects = self.checkbox_list.GetObjects()
-        logger.log.debug(f"Excluding unchecked files from file list: {[item[0] for item in self.source_data.timestamped_file_list]}")
         for file_list_obj, obj in zip(self.source_data.timestamped_file_list, objects):
             checked = self.checkbox_list.GetCheckState(obj)
             if checked:
@@ -271,10 +281,11 @@ class MyFrame(wx.Frame):
             else:
                 logger.log.debug(f"Excluding {file_list_obj[0]}")
         self.source_data.timestamped_file_list = new_timestamped_file_list
+        short_file_paths = self._gen_short_file_names([item[0] for item in self.source_data.timestamped_file_list])
         self.checkbox_list.SetObjects([
             MyDataObject(
                 fp, timestamp, exposure, checked=True
-            ) for fp, timestamp, exposure in self.source_data.timestamped_file_list
+            ) for fp, (_, timestamp, exposure) in zip(short_file_paths, self.source_data.timestamped_file_list)
         ])
         objects = self.checkbox_list.GetObjects()
         for obj in objects:
@@ -298,10 +309,11 @@ class MyFrame(wx.Frame):
         self.process_thread.start()
 
     def on_load_finished(self):
+        short_file_paths = self._gen_short_file_names([item[0] for item in self.source_data.timestamped_file_list])
         self.checkbox_list.SetObjects([
             MyDataObject(
                 fp, timestamp, exposure, checked=True
-            ) for fp, timestamp, exposure in self.source_data.timestamped_file_list
+            ) for fp, (_, timestamp, exposure) in zip(short_file_paths, self.source_data.timestamped_file_list)
         ])
         objects = self.checkbox_list.GetObjects()
         for obj in objects:
