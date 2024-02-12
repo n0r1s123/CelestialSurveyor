@@ -5,6 +5,7 @@ import random
 import sys
 import numpy as np
 import tqdm
+import tifffile
 
 from collections.abc import Sequence
 from PIL import Image
@@ -21,17 +22,20 @@ class TrainingDataset:
     def __init__(self, source_datas: Sequence[SourceData]):
         self.source_datas = source_datas
         logger.log.info("Loading star samples")
-        self.star_samples = self.__load_star_samples()
+        self.star_samples = self._load_star_samples()
         for item in self.source_datas:
             item.load_headers_and_sort()
-            item.load_images(progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()), to_debayer=item.to_debayer)
+            item.load_images(
+                progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()),
+                to_debayer=item.to_debayer,
+                dark_folder=item.darks)
             item.load_exclusion_boxes()
 
     @classmethod
-    def __load_star_samples(cls):
+    def _load_star_samples(cls):
         file_list = [
             os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER) if ".tif" in item]
-        star_samples = np.array([np.array(Image.open(item)) for item in file_list])
+        star_samples = np.array([np.array(tifffile.tifffile.imread(item)) for item in file_list])
         return star_samples
 
     def get_random_shrink(self, source_data_idx=0):
@@ -41,8 +45,8 @@ class TrainingDataset:
 
         # TODO: bad implementation need to rework
         while not generated:
-            y = random.randint(0, self.source_datas[source_data_idx].img_shape[0] - size)
-            x = random.randint(0, self.source_datas[source_data_idx].img_shape[1] - size)
+            y = random.randint(0, self.source_datas[source_data_idx].img_shape[0] - size-0)
+            x = random.randint(0, self.source_datas[source_data_idx].img_shape[1] - size-0)
             if exclusion_boxes is not None and len(exclusion_boxes) > 0:
                 for box in exclusion_boxes:
                     x1, y1, x2, y2 = box
@@ -130,9 +134,12 @@ class TrainingDataset:
             y = random.randint(0, y_shape - 1)
             x = random.randint(0, x_shape - 1)
             object_factor = random.randrange(120, 300) / 300
-            star_max = np.max(star_img)
+            star_max = np.amax(star_img)
             expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
-            multiplier = expected_max / star_max
+            if star_max == 0:
+                multiplier = 1
+            else:
+                multiplier = expected_max / star_max
             star_img = star_img * multiplier
 
             # 0 means point like object which appears on the single image
@@ -149,7 +156,7 @@ class TrainingDataset:
                 imgs[start_image_idx], star_img, (y, x), - movement_vector, 10000)
         return imgs
 
-    def draw_hot_pixels(self, imgs):
+    def draw_hot_pixels(self, imgs, dead=False):
         imgs = np.copy(imgs)
         probablity = 70
         result = []
@@ -158,7 +165,7 @@ class TrainingDataset:
                 y_shape, x_shape = imgs[0].shape[:2]
                 y = random.randint(0, y_shape - 1)
                 x = random.randint(0, x_shape - 1)
-                img[y, x] = 1
+                img[y, x] = 0 if dead else random.randrange(50, 101) / 100.
             result.append(img)
         result = np.array(result)
         return result
@@ -211,9 +218,12 @@ class TrainingDataset:
             start_y = random.randint(0, y_shape - 1)
             start_x = random.randint(0, x_shape - 1)
             object_factor = random.randrange(120, 301) / 300
-            star_max = np.max(star_img)
+            star_max = np.amax(star_img)
             expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
-            multiplier = expected_max / star_max
+            if star_max == 0:
+                multiplier = 1
+            else:
+                multiplier = expected_max / star_max
             star_img = star_img * multiplier
 
             # Calculate min and max movement vector length (pixels/hour)
@@ -261,36 +271,34 @@ class TrainingDataset:
     @classmethod
     def gen_timestamps(cls, num_timestamps):
         max_sessions_num = min((num_timestamps - 1) // 2 + 1, 4)
-        sessions_num = random.randrange(1, max_sessions_num + 1)
+        sessions_num = random.randrange(0, max_sessions_num)
         exposures = (0.25, 0.5, *tuple(range(1, 11)))
         exposure = random.choice(exposures) * 60
-
-        # Initialize an empty list to store the chosen numbers
-        session_lens = []
-
-        # Choose the first number randomly
-        if sessions_num > 1:
-            bla_num = 1
-            session_lens.append(random.randrange(0, num_timestamps - bla_num * sessions_num))
-            # Choose subsequent numbers with at least a 3-number interval
-            for bla in range(1, sessions_num - 1):
-                session_lens.append(random.randrange(session_lens[-1] + bla_num, num_timestamps - bla_num * (sessions_num - bla)))
-
-        session_lens.append(num_timestamps)
-        session_lens = [session_lens[i] - session_lens[i - 1] if i >= 1 else session_lens[i] for i in
-                        range(len(session_lens))]
-
-        max_inter_exposure = 20 * 60  # 20 minutes
+        new_session_starts = []
+        bla_timestamps = list(range(1, num_timestamps + 1))
+        for _ in range(sessions_num):
+            temp_session_start = random.choice(bla_timestamps)
+            bla_timestamps.pop(bla_timestamps.index(temp_session_start))
+            # while temp_session_start in new_session_starts:
+            #     temp_session_start = random.randrange(1, num_timestamps + 1)
+            new_session_starts.append(temp_session_start)
+        new_session_starts.sort()
+        start_ts = datetime.datetime.now()
         timestamps = []
-        for se_num, session_len in enumerate(session_lens):
-            for num in range(session_len):
-                if num == 0:
-                    timestamps.append(se_num * random.randrange(15) * 24 * 3600)  # maximum 15 days between sessions
-                    continue
-                next_timestamp = timestamps[-1] + exposure + random.randrange(1, max_inter_exposure + 1)
-                timestamps.append(next_timestamp)
+        max_inter_exposure = 20 * 60  # 20 minutes
+        added_days = 0
+        for num in range(num_timestamps):
 
-        timestamps = [datetime.datetime.now() + datetime.timedelta(seconds=item) for item in timestamps]
+            if num == 0:
+                next_timestamp = datetime.datetime.now()
+            elif num in new_session_starts:
+                added_days += 1
+                next_timestamp = start_ts + datetime.timedelta(
+                    days=added_days, hours=random.randrange(0, 3), seconds=random.randrange(0, 3600))
+            else:
+                next_timestamp = timestamps[-1] + datetime.timedelta(
+                    seconds=exposure + random.randrange(1, max_inter_exposure + 1))
+            timestamps.append(next_timestamp)
         return timestamps
 
     def make_series(self, source_data_idx=0):
@@ -312,8 +320,8 @@ class TrainingDataset:
         # if res == 0:
         if random.randint(0, 100) >= 80:
             imgs = self.draw_one_image_artefact(imgs)
-        if random.randint(0, 100) >= 80:
-            imgs = self.draw_hot_pixels(imgs)
+        if random.randint(0, 100) >= 100:
+            imgs = self.draw_hot_pixels(imgs, bool(random.randrange(0, 2)))
 
         imgs = SourceData.prepare_images(imgs)
 

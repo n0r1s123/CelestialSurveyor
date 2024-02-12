@@ -153,7 +153,9 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
                 return
             rejected = False
             img_data, _, _ = load_func(fp, non_linear, load_image=True, to_debayer=to_debayer, master_dark=master_dark)
+
             if to_align:
+                img_data += ALIGNMENT_OFFSET
                 try:
                     img_data, _ = aa.register(img_data, reference_image, fill_value=0)
                 except (aa.MaxIterError, ValueError):
@@ -162,15 +164,15 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
                     else:
                         raise Exception("Unable to make star alignment. Try to delete bad images or use --skip_bad key")
             if not rejected:
-                if not non_linear:
-                    img_data = stretch_image(img_data)
-                img_data += ALIGNMENT_OFFSET
+
+
                 y_boarders, x_boarders = SourceData.crop_raw(img_data, to_do=False)
                 y_boarders, x_boarders = SourceData.crop_fine(
                     img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
-                img_data -= ALIGNMENT_OFFSET
-
-
+                if to_align:
+                    img_data -= ALIGNMENT_OFFSET
+                if not non_linear:
+                    img_data = stretch_image(img_data)
                 y_boar[num] = np.array(y_boarders, dtype="uint16")
                 x_boar[num] = np.array(x_boarders, dtype="uint16")
                 loaded_images[num] = img_data
@@ -192,7 +194,7 @@ class SourceData:
     X_SPLITS = 1
     Y_SPLITS = 1
 
-    def __init__(self, file_list, non_linear=False, to_align=True, to_skip_bad=False, num_from_session=None, to_debayer=False):
+    def __init__(self, file_list, non_linear=False, to_align=True, to_skip_bad=False, num_from_session=None, to_debayer=False, darks=None):
         self.file_list = file_list
         self.to_align = to_align
         self.to_skip_bad = to_skip_bad
@@ -207,6 +209,7 @@ class SourceData:
         self.images = None
         self.num_from_session = num_from_session
         self.to_debayer = to_debayer
+        self.darks = darks
 
     def __del__(self):
         if isinstance(self.imgs_shm, SharedMemory):
@@ -481,8 +484,10 @@ class SourceData:
             if item - first_ts > 14 * 60 * 60:
                 first_ts = item
             new_timestamps.append(item - first_ts)
-        normalized_timestamps = np.array([item / max(new_timestamps) for item in new_timestamps])
-
+        if any(ts != 0 for ts in new_timestamps):
+            normalized_timestamps = np.array([item / max(new_timestamps) for item in new_timestamps])
+        else:
+            normalized_timestamps = new_timestamps
         diff_timestamps = np.array(
             [timestamps[i] - timestamps[i - 1 if i - 1 >= 0 else 0] for i in range(len(timestamps))])
         diff_timestamps = (
@@ -517,10 +522,10 @@ class SourceData:
                 x_mult = x_shape / width
 
             for tag in bs_data.find_all('box', {'label': 'Asteroid'}):
-                xtl = round(float(tag.get("xtl")) * x_mult)
-                ytl = round(float(tag.get("ytl")) * y_mult)
-                xbr = round(float(tag.get("xbr")) * x_mult)
-                ybr = round(float(tag.get("ybr")) * y_mult)
+                xtl = round(float(tag.get("xtl")) * x_mult) - 100
+                ytl = round(float(tag.get("ytl")) * y_mult) - 100
+                xbr = round(float(tag.get("xbr")) * x_mult) + 100
+                ybr = round(float(tag.get("ybr")) * y_mult) + 100
                 boxes.append((xtl, ytl, xbr, ybr))
 
             all_boxes.extend(boxes)
@@ -594,7 +599,7 @@ class SourceData:
         imgs = np.array(
             [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(len(imgs))])
         imgs[imgs < 0] = 0
-        imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
+        imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs) + 0.00000001)
         imgs.shape = (*imgs.shape, 1)
         return imgs
 
