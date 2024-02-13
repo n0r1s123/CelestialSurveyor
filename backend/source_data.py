@@ -64,8 +64,33 @@ def get_master_dark( folder, to_debayer=False, darks_number_limit=10):
     master_dark = np.average(imgs, axis=0)
     return master_dark
 
+@arg_logger
+def get_master_flat(flat_folder, dark_flat_folder, to_debayer=False, flats_number_limit=10):
+    logger.log.info("Making master flat")
+    flat_dark = get_master_dark(dark_flat_folder, to_debayer)
+    files = [
+        os.path.join(flat_folder, item) for item in os.listdir(flat_folder) if
+            item.lower().endswith(".fit") or item.lower().endswith(".fits")]
+    if not files:
+        logger.log.warn("There are no FITS files located in the flat folder. Continuing without darks.")
+        return
+    imgs = []
+    for file_name in files[:flats_number_limit]:
+        img = astropy.io.fits.getdata(file_name)
+        if len(img.shape) == 2:
+            img.shape = *img.shape, 1
+        if img.shape[0] in [1, 3]:
+            img = np.swapaxes(img, 0, 2)
+        if to_debayer and img.shape[2] == 1:
+            img = debayer(img)
+        imgs.append(img - flat_dark)
+    imgs = np.array(imgs)
+    master_flat = np.average(imgs, axis=0)
+    return master_flat
 
-def __process_img_data(img_data, non_linear):
+
+
+def process_img_data(img_data, non_linear):
     # sometimes image is returned in channels first format. Converting to channels last in this case
     if img_data.shape[0] in [1, 3]:
         img_data = np.swapaxes(img_data, 0, 2)
@@ -98,7 +123,7 @@ def __get_datetime_from_str(timestamp):
     return timestamp
 
 
-def load_fits(file_path, non_linear=False, load_image=True, to_debayer=False, master_dark=None):
+def load_fits(file_path, non_linear=False, load_image=True, to_debayer=False):
     with astropy.io.fits.open(file_path) as hdul:
         header = hdul[0].header
         exposure = float(header['EXPTIME'])
@@ -111,20 +136,14 @@ def load_fits(file_path, non_linear=False, load_image=True, to_debayer=False, ma
                 img_data = np.swapaxes(img_data, 0, 2)
             if to_debayer and img_data.shape[2] == 1:
                 img_data = np.array(debayer(img_data), dtype='float32')
-            if master_dark is not None:
-                img_data = img_data - master_dark
 
-            if img_data.shape[2] == 3:
-                img_data = to_gray(img_data)
-            img_data = __process_img_data(img_data, non_linear)
         else:
             img_data = None
     return img_data, timestamp, exposure
 
 
-def load_xisf(file_path, non_linear=False, load_image=True, to_debayer=False, master_dark=None):
+def load_xisf(file_path, non_linear=False, load_image=True, to_debayer=False):
     _ = to_debayer
-    _ = master_dark
     xisf = XISF(file_path)
     img_meta = xisf.get_images_metadata()[0]
     timestamp = __get_datetime_from_str(img_meta["FITSKeywords"]["DATE-OBS"][0]['value'])
@@ -132,27 +151,31 @@ def load_xisf(file_path, non_linear=False, load_image=True, to_debayer=False, ma
     if load_image:
         img_data = xisf.read_image(0)
         img_data = np.array(img_data)
-        img_data = __process_img_data(img_data, non_linear)
+
     else:
         img_data = None
     return img_data, timestamp, exposure
 
 
-def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non_linear, progress_queue: Queue, error_queue: Queue,
-                reference_image, to_align, to_skip_bad, to_debayer, master_dark):
+def load_worker(load_fps, num_list, load_func, non_linear, progress_queue: Queue, error_queue: Queue,
+                reference_image, to_align, to_skip_bad, to_debayer, master_dark, master_flat):
     try:
-        img_buf_name, y_buf_name, x_buf_name = shared_mem_names
-        imgs_buf = SharedMemory(name=img_buf_name, create=False)
-        loaded_images = np.ndarray(imgs_shape, dtype='float32', buffer=imgs_buf.buf)
-        y_boar_buf = SharedMemory(name=y_buf_name, create=False)
-        y_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=y_boar_buf.buf)
-        x_boar_buf = SharedMemory(name=x_buf_name, create=False)
-        x_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=x_boar_buf.buf)
+        # img_buf_name, y_buf_name, x_buf_name = shared_mem_names
+        # imgs_buf = SharedMemory(name=img_buf_name, create=False)
+        # loaded_images = np.ndarray(imgs_shape, dtype='float32', buffer=imgs_buf.buf)
+        # y_boar_buf = SharedMemory(name=y_buf_name, create=False)
+        # y_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=y_boar_buf.buf)
+        # x_boar_buf = SharedMemory(name=x_buf_name, create=False)
+        # x_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=x_boar_buf.buf)
         for num, fp in zip(num_list, load_fps):
             if not error_queue.empty():
                 return
             rejected = False
-            img_data, _, _ = load_func(fp, non_linear, load_image=True, to_debayer=to_debayer, master_dark=master_dark)
+            img_data, _, _ = load_func(fp, non_linear, load_image=True, to_debayer=to_debayer)
+            if master_dark is not None:
+                img_data -= master_dark
+            if master_flat is not None:
+                img_data /= master_flat
             if to_align:
                 img_data += ALIGNMENT_OFFSET
                 try:
@@ -163,6 +186,8 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
                     else:
                         raise Exception("Unable to make star alignment. Try to delete bad images or use --skip_bad key")
             if not rejected:
+
+                img_data = process_img_data(img_data, non_linear)
                 y_boarders, x_boarders = SourceData.crop_raw(img_data, to_do=False)
                 y_boarders, x_boarders = SourceData.crop_fine(
                     img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
@@ -170,11 +195,13 @@ def load_worker(load_fps, num_list, imgs_shape, shared_mem_names, load_func, non
                     img_data -= ALIGNMENT_OFFSET
                 if not non_linear:
                     img_data = stretch_image(img_data)
-                y_boar[num] = np.array(y_boarders, dtype="uint16")
-                x_boar[num] = np.array(x_boarders, dtype="uint16")
-                loaded_images[num] = img_data
-            progress_queue.put((num, rejected))
-        imgs_buf.close()
+                # y_boar[num] = np.array(y_boarders, dtype="uint16")
+                # x_boar[num] = np.array(x_boarders, dtype="uint16")
+                # loaded_images[num] = img_data
+                progress_queue.put((num, rejected, img_data, np.array(y_boarders, dtype="uint16"), np.array(x_boarders, dtype="uint16")))
+            else:
+                progress_queue.put((num, rejected, None, None, None))
+        # imgs_buf.close()
     except:
         error_trace = traceback.format_exc()
         progress_queue.put(error_trace)
@@ -371,7 +398,7 @@ class SourceData:
         self.timestamped_file_list = list(zip(file_paths, timestamps, exposures))
 
     @arg_logger
-    def load_images(self, to_debayer: bool = False, dark_folder=None, progress_bar: Optional[AbstractProgressBar] = None, frame: Optional[wx.Frame] = None):
+    def load_images(self, to_debayer: bool = False, dark_folder=None, flat_folder=None, dark_flat_folder=None, progress_bar: Optional[AbstractProgressBar] = None, frame: Optional[wx.Frame] = None):
         to_align = self.to_align
         non_linear = self.non_linear
         file_paths = [item[0] for item in self.timestamped_file_list]
@@ -391,24 +418,31 @@ class SourceData:
             mem_size = mem_size * n
         mem_size = mem_size * 4
         logger.log.debug(f"Allocating memory size: {mem_size // (1024 * 1024)} Mb")
-        self.imgs_shm = SharedMemory(size=mem_size, create=True)
+        # self.imgs_shm = SharedMemory(size=mem_size, create=True)
         logger.log.debug(f"Allocated memory size: {mem_size // (1024 * 1024)} Mb")
         images_shape = (len(file_paths), *img.shape[:2])
-        imgs = np.ndarray(images_shape, dtype='float32', buffer=self.imgs_shm.buf)
+        imgs = np.ndarray(images_shape, dtype='float32')
 
-        self.y_boarders_shm = SharedMemory(size=len(file_paths) * 2 * 2, create=True)
-        y_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16', buffer=self.y_boarders_shm.buf)
-        self.x_boarders_shm = SharedMemory(size=len(file_paths) * 2 * 2, create=True)
-        x_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16', buffer=self.x_boarders_shm.buf)
+        y_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16')
+        x_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16')
 
 
         master_dark = None
-        if dark_folder is not None and os.path.exists:
+        master_flat = None
+        if dark_folder is not None and os.path.exists(dark_folder):
             master_dark = get_master_dark(dark_folder, to_debayer=to_debayer)
+        if flat_folder is not None and dark_flat_folder is not None and os.path.exists(flat_folder) and \
+                os.path.exists(dark_flat_folder):
+            master_flat = get_master_flat(flat_folder, dark_flat_folder, to_debayer=to_debayer)
+        if master_dark is not None:
+            img -= master_dark
+        if master_flat is not None:
+            img /= master_flat
+
+
 
         worker_num = min((os.cpu_count(), 4))
         processes = []
-        # progress_bar = tqdm.tqdm(total=len(file_paths))
         progress_queue = Queue()
         error_queue = Queue()
         for num in range(worker_num):
@@ -417,8 +451,6 @@ class SourceData:
                 Process(target=load_worker, args=(
                     file_paths[num::worker_num],
                     list(range(len(file_paths)))[num::worker_num],
-                    images_shape,
-                    (self.imgs_shm.name, self.y_boarders_shm.name, self.x_boarders_shm.name),
                     load_func,
                     non_linear,
                     progress_queue,
@@ -427,7 +459,8 @@ class SourceData:
                     to_align,
                     True,
                     to_debayer,
-                    master_dark
+                    master_dark,
+                    master_flat
                 ))
             )
         for proc in processes:
@@ -441,7 +474,10 @@ class SourceData:
                 for proc in processes:
                     proc.join()
                 sys.exit(-1)
-            num, rejected = res
+            num, rejected, loaded_img, loaded_y_borders, loaded_x_borders = res
+            imgs[num] = loaded_img
+            y_boaredrs[num] = loaded_y_borders
+            x_boaredrs[num] = loaded_x_borders
             if rejected:
                 rejected_list.append(num)
                 logger.log.info(f"Rejected file: {self.timestamped_file_list[num][0]}")

@@ -100,6 +100,10 @@ class MyFrame(wx.Frame):
         controls_sizer = wx.BoxSizer(wx.VERTICAL)
 
         controls_label = wx.StaticText(self.panel)
+        flat_label = wx.StaticText(self.panel, label="Select folder with flat frames")
+        self.flat_path_picker = wx.DirPickerCtrl(self.panel, style=wx.DIRP_USE_TEXTCTRL)
+        dark_flat_label = wx.StaticText(self.panel, label="Select folder with dark flat frames")
+        self.dark_flat_path_picker = wx.DirPickerCtrl(self.panel, style=wx.DIRP_USE_TEXTCTRL)
         dark_label = wx.StaticText(self.panel, label="Select folder with dark frames")
         self.dark_path_picker = wx.DirPickerCtrl(self.panel, style=wx.DIRP_USE_TEXTCTRL)
         self.btn_add_files = wx.Button(self.panel, label="Add files")
@@ -113,7 +117,7 @@ class MyFrame(wx.Frame):
         self.btn_load_files = wx.Button(self.panel, label="Load files")
 
         self.Bind(wx.EVT_BUTTON, self.on_load_files, self.btn_load_files)
-        choices = [str(i) for i in range(1, 4)]
+        choices = [str(i) for i in range(1, 11)]
         self.chk_to_second_align = wx.CheckBox(self.panel, label="Secondary alignment")
         self.chk_to_second_align.SetValue(False)
         label1 = wx.StaticText(self.panel, label="Select number of X splits for secondary alignment")
@@ -133,6 +137,10 @@ class MyFrame(wx.Frame):
         self.Bind(wx.EVT_BUTTON, self.on_start_again, self.btn_start_again)
 
         controls_sizer.Add(controls_label, 0, wx.EXPAND | wx.ALL, 5)
+        controls_sizer.Add(flat_label, 0, wx.EXPAND | wx.ALL, 5)
+        controls_sizer.Add(self.flat_path_picker, 0, wx.EXPAND | wx.ALL, 5)
+        controls_sizer.Add(dark_flat_label, 0, wx.EXPAND | wx.ALL, 5)
+        controls_sizer.Add(self.dark_flat_path_picker, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(dark_label, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.dark_path_picker, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.btn_add_files, 0, wx.EXPAND | wx.ALL, 5)
@@ -272,6 +280,7 @@ class MyFrame(wx.Frame):
 
     def on_load_files(self, event):
         logger.log.debug("Loading files is initialized by user")
+        self.progress_bar.SetValue(0)
         new_timestamped_file_list = []
         objects = self.checkbox_list.GetObjects()
         for file_list_obj, obj in zip(self.source_data.timestamped_file_list, objects):
@@ -298,12 +307,17 @@ class MyFrame(wx.Frame):
         logger.log.info("Starting image loading...")
         dark_path = self.dark_path_picker.GetPath()
         dark_path = dark_path if dark_path else None
-        logger.log.error(dark_path)
+        flat_path = self.flat_path_picker.GetPath()
+        flat_path = flat_path if flat_path else None
+        dark_flat_path = self.dark_flat_path_picker.GetPath()
+        dark_flat_path = dark_flat_path if dark_flat_path else None
         self.process_thread = threading.Thread(target=self.source_data.load_images, kwargs={
             "progress_bar": ProgressBarFactory.create_progress_bar(self.progress_bar),
             "frame": self,
             "to_debayer": self.to_debayer.GetValue(),
-            "dark_folder": dark_path
+            "dark_folder": dark_path, 
+            "flat_folder": flat_path,
+            "dark_flat_folder": dark_flat_path,
 
         })
         self.process_thread.start()
@@ -333,12 +347,18 @@ class MyFrame(wx.Frame):
         if self.source_data.images is not None and len(self.source_data.images) > 0:
             obj = self.checkbox_list.GetSelectedObject()
             file_paths = [item[0] for item in self.source_data.timestamped_file_list]
-            image_idx = file_paths.index(obj.file_path)
+            for num, item in enumerate(file_paths):
+                if item.endswith(obj.file_path):
+                    image_idx = num
+                    break
+            else:
+                raise ValueError(f"{'obj.file_path'} is not in file list")
             img_to_draw = (self.source_data.images[image_idx] * 255).astype('uint8')
             self.draw_panel.image_array = img_to_draw
             self.draw_panel.Refresh()
 
     def on_process(self, event):
+        self.process_progress_bar.SetValue(0)
         output_folder = self.results_path_picker.GetPath()
         objects = self.checkbox_list.GetObjects()
         use_img_mask = []
