@@ -1,77 +1,56 @@
-import os
-import tensorflow as tf
+from keras.layers import Input, Conv3D, BatchNormalization, Activation, MaxPooling3D, GlobalAveragePooling3D, Dense, Concatenate
+from keras.models import Model
 from cryptography.fernet import Fernet
+import os
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
+def conv3d_bn(x, filters, kernel_size, strides=(1, 1, 1), padding='same'):
+    x = Conv3D(filters=filters,
+               kernel_size=kernel_size,
+               strides=strides,
+               padding=padding)(x)
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    return x
 
-class Conv2Plus1D(tf.keras.layers.Layer):
-    def __init__(self, filters, kernel_size, padding, data_format):
-        """
-          A sequence of convolutional layers that first apply the convolution operation over the
-          spatial dimensions, and then the temporal dimension.
-        """
-        super().__init__()
-        self.seq = tf.keras.models.Sequential([
-            # Spatial decomposition
-            tf.keras.layers.Conv3D(filters=filters,
-                                   kernel_size=(1, kernel_size[1], kernel_size[2]),
-                                   padding=padding, data_format=data_format),
-            # Temporal decomposition
-            tf.keras.layers.Conv3D(filters=filters,
-                                   kernel_size=(kernel_size[0], 1, 1),
-                                   padding=padding, data_format=data_format)
-            ])
+def SlowFast(input_shape=(None, 64, 64, 1), num_fusions=3):
+    # Slow pathway
+    input = Input(shape=input_shape)
+    slow = conv3d_bn(input, 64, (5, 3, 3), strides=(1, 2, 2), padding='same')
+    slow = MaxPooling3D(pool_size=(1, 3, 3), strides=(1, 2, 2), padding='same')(slow)
+    slow = conv3d_bn(slow, 64, (3, 1, 1), padding='same')
 
-    def call(self, x):
-        return self.seq(x)
+    # Fast pathway
+    # input_f = Input(shape=input_shape)
+    fast = conv3d_bn(input, 8, (1, 7, 7), strides=(1, 2, 2), padding='same')
+    fast = MaxPooling3D(pool_size=(1, 3, 3), strides=(1, 2, 2), padding='same')(fast)
+    fast = conv3d_bn(fast, 32, (1, 3, 3), padding='same')
 
+    # Multiple Fusions
+    for _ in range(num_fusions):
 
-def build_rnn_model():
-    fast_image_input = tf.keras.layers.Input(shape=(None, 64, 64, 1), name='fast_input')
-    fast_timestamp_input = tf.keras.layers.Input(shape=(None, 2))
-    fast_rnn = tf.keras.layers.Conv3D(16, (3, 3, 3), activation='relu', padding='same')(fast_image_input)
-    fast_rnn = tf.keras.layers.MaxPooling3D((1, 2, 2))(fast_rnn)
-    fast_rnn = tf.keras.layers.Conv3D(32, (3, 3, 3), activation='relu', padding='same')(fast_rnn)
-    fast_rnn = tf.keras.layers.MaxPooling3D((1, 2, 2))(fast_rnn)
-    fast_rnn = tf.keras.layers.Conv3D(64, (3, 3, 3), activation='relu', padding='same')(fast_rnn)
-    fast_rnn = tf.keras.layers.MaxPooling3D((1, 2, 2))(fast_rnn)
-    fast_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(fast_rnn)
-    fast_rnn = tf.keras.layers.LSTM(128, return_sequences=True)(fast_rnn)
+        slow = Concatenate()([slow, fast])
+        fast = conv3d_bn(fast, 64, (1, 3, 3), padding='same')  # Adjust channels for fusion
+        slow = conv3d_bn(slow, 128, (3, 1, 1), padding='same')
 
-    fast_timestamp_rnn = tf.keras.layers.LSTM(64, return_sequences=True)(fast_timestamp_input)
+    # Continue Slow Path
+    slow = GlobalAveragePooling3D()(slow)
+    fast = GlobalAveragePooling3D()(fast)
+    output = Concatenate()([slow, fast])
+    output = Dense(128, activation='relu')(output)
+    output = Dense(64, activation='relu')(output)
+    output = Dense(32, activation='relu')(output)
+    output = Dense(1, activation='sigmoid')(output)
 
-    fast_features = tf.keras.layers.Concatenate()([fast_rnn, fast_timestamp_rnn])
-    fast_lstm = tf.keras.layers.LSTM(128, return_sequences=False)(fast_features)
-
-    #####################################################################################
-
-    slow_rnn = tf.keras.layers.Conv3D(32, (3, 3, 3), activation='relu', padding='same')(fast_image_input)
-    slow_rnn = tf.keras.layers.MaxPooling3D((2, 2, 2))(slow_rnn)
-    slow_rnn = tf.keras.layers.Conv3D(64, (3, 3, 3), activation='relu', padding='same')(slow_rnn)
-    slow_rnn = tf.keras.layers.MaxPooling3D((2, 2, 2))(slow_rnn)
-    slow_rnn = tf.keras.layers.Conv3D(128, (3, 3, 3), activation='relu', padding='same')(slow_rnn)
-    slow_rnn = tf.keras.layers.MaxPooling3D((2, 2, 2))(slow_rnn)
-    slow_rnn = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(slow_rnn)
-    slow_rnn = tf.keras.layers.LSTM(128, return_sequences=True)(slow_rnn)
-
-    # slow_timestamp_rnn = tf.keras.layers.LSTM(128, return_sequences=True)(slow_timestamp_input)
-
-    # slow_features = tf.keras.layers.Concatenate()([slow_rnn, slow_timestamp_rnn])
-    slow_lstm = tf.keras.layers.LSTM(64, return_sequences=False)(slow_rnn)
-
-    fused_features = tf.keras.layers.Concatenate()([fast_lstm, slow_lstm])
-
-    # Fully connected layers for classification
-    fc1 = tf.keras.layers.Dense(64, activation='relu')(fused_features)
-    output = tf.keras.layers.Dense(1, activation='sigmoid', name='output')(fc1)
-
-    # Create the model
-    model = tf.keras.models.Model(inputs=[fast_image_input, fast_timestamp_input], outputs=output)
-
+    model = Model(inputs=input, outputs=output)
     return model
 
+
+def build_model():
+    slowfast_model = SlowFast(num_fusions=3)  # Example: Three fusion steps
+    return slowfast_model
 
 # Encrypt the model weights
 def encrypt_model(model_name, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw='):
@@ -89,3 +68,7 @@ def encrypt_model(model_name, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw=
     with open(f"{model_name}.bin", "wb") as file:
         file.write(encrypted_model)
 
+
+if __name__ == '__main__':
+    model = build_model()
+    model.summary()

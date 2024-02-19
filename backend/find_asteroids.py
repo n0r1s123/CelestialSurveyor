@@ -15,10 +15,11 @@ import h5py
 import tensorflow as tf
 from PIL import Image
 
-from .source_data import SourceData
+from .source_data import SourceData, stretch_image
 from .progress_bar import AbstractProgressBar
 
 from logger.logger import get_logger
+
 
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -32,7 +33,7 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
         use_img_mask = [True for _ in range(len(source_data.images))]
 
     model_path = get_model_path() if model_path == "default" else model_path
-    logger.log.debug(f"Loading model: {model_path}")
+    logger.log.info(f"Loading model: {model_path}")
     model = decrypt_model(model_path)
     batch_size = 10
 
@@ -40,14 +41,25 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
         y_splits = 1
         x_splits = 1
     source_data.chop_imgs(y_splits=y_splits, x_splits=x_splits)
-    splits = source_data.gen_splits(y_splits, x_splits, secondary_alignment, use_img_mask)
+    splits = source_data.gen_splits(y_splits, x_splits, secondary_alignment, use_img_mask, output_folder=output_folder)
     objects_coords = []
-    for imgs, y_offset, x_offset, use_img_mask in splits:
-        ys = np.arange(0, imgs[0].shape[0], 64)
-        ys[-1] = imgs[0].shape[0] - 64 - source_data.BOARDER_OFFSET - 1
 
-        xs = np.arange(0, imgs[0].shape[1], 64)
-        xs[-1] = imgs[0].shape[1] - 64 - source_data.BOARDER_OFFSET - 1
+    max_image = source_data.get_max_image(use_img_mask)
+    dpi = 80
+    height, width = max_image.shape
+    figsize = width / float(dpi), height / float(dpi)
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.imshow(max_image, cmap='gray')
+
+    for imgs, y_offset, x_offset, use_img_mask in splits:
+        multiple_pick = 2
+        ys = np.arange(0, imgs[0].shape[0] - 64 // multiple_pick, 64 // multiple_pick)
+        ys[-1] = imgs[0].shape[0] - 64
+
+        xs = np.arange(0, imgs[0].shape[1] - 64 // multiple_pick, 64 // multiple_pick)
+        xs[-1] = imgs[0].shape[1] - 64
+
         coords = np.array([np.array([y, x]) for y in ys for x in xs])
 
         number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
@@ -75,40 +87,38 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                 imgs_batch.append(shrinked)
                 ts_pred.append(timestamps)
             imgs_batch = np.array(imgs_batch)
-            results = model.predict([imgs_batch, np.array(ts_pred)], verbose=0)
+            results = model.predict(imgs_batch, verbose=0)
             for res, (y, x) in zip(results, coord_batch):
                 if res > 0.9:
                     objects_coords.append((y + y_offset, x + x_offset, res))
             if progress_bar:
                 progress_bar.update()
+    progress_bar.complete()
 
     ########
     # Save results
     ########
-    max_image = source_data.get_max_image(use_img_mask)
-    dpi = 80
-    height, width = max_image.shape
+    # max_image = source_data.get_max_image(use_img_mask)
+    # dpi = 80
+    # height, width = max_image.shape
     # What size does the figure need to be in inches to fit the image?
-    figsize = width / float(dpi), height / float(dpi)
-    fig = plt.figure(figsize=figsize, dpi=dpi)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.imshow(max_image, cmap='gray')
+
+
+
+    # figsize = width / float(dpi), height / float(dpi)
+    # fig = plt.figure(figsize=figsize, dpi=dpi)
+    # ax = fig.add_axes([0, 0, 1, 1])
+    # ax.imshow(max_image, cmap='gray')
     gif_size = 5
     processed = []
-    print(objects_coords)
     for coord_num, (y, x, probability) in enumerate(objects_coords):
-        # confirmed = confirm_prediction(model, dataset=dataset, y=y, x=x, dataset_num=num)
-        # if hide_unconfirmed and not confirmed:
-        #     continue
-        # color = 'green' if confirmed else 'yellow'
         probability = probability[0]
         color = "yellow" if probability <= 0.95 else "green"
         plt.gca().add_patch(Rectangle((x, y), 64, 64,
                                       edgecolor=color,
-                                      # edgecolor='green',
                                       facecolor='none',
-                                      lw=4))
-        plt.text(x, y - 10, "{:.2f}".format(probability), color="red", fontsize=20)
+                                      lw=2))
+        plt.text(x, y - 10, "{:.2f}".format(probability), color="red", fontsize=15)
         for y_pr, x_pr in processed:
             if x_pr - (gif_size // 2) * 64 <= x <= x_pr + (gif_size // 2) * 64 and \
                     y_pr - (gif_size // 2) * 64 <= y <= y_pr + (gif_size // 2) * 64:
@@ -119,11 +129,13 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
             plt.gca().add_patch(Rectangle((x_new, y_new), size, size,
                                           edgecolor='red',
                                           facecolor='none',
-                                          lw=6))
+                                          lw=4))
             plt.text(x_new + 45, y_new + 60, str(len(processed)), color="red", fontsize=40)
 
             frames = source_data.get_shrinked_img_series(source_data.images, 64 * gif_size, y_new, x_new, use_img_mask)
-            frames = frames * 256
+            if not source_data.non_linear:
+                frames = np.array([stretch_image(i) for i in frames])
+            frames = frames * 255
             new_shape = list(frames.shape)
             new_shape[1] += 20
             new_frames = np.zeros(new_shape)
@@ -145,6 +157,7 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                 loop=0)
 
     plt.savefig(os.path.join(output_folder, f"results.png"))
+    logger.log.info(f"Calculations are finished. Check results folder: {output_folder}")
 
 
 # Decrypt the model weights
@@ -169,7 +182,9 @@ def decrypt_model(encrypted_model_path, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl
 
 def get_model_path():
     root_dir = os.path.dirname(os.path.realpath(__file__))
-    file_list = os.listdir(root_dir)
+    file_list = []
+    if os.path.exists(root_dir):
+        file_list = os.listdir(root_dir)
     models = [item for item in file_list if item.startswith('model') and item.endswith('bin')]
     model_nums = []
     for model in models:
@@ -180,7 +195,7 @@ def get_model_path():
         model_num = max(model_nums)
         model_path = root_dir
     else:
-        secondary_dir = os.path.join(root_dir, '_internal')
+        secondary_dir = os.path.split(root_dir)[0]
         file_list = os.listdir(secondary_dir)
         models = [item for item in file_list if item.startswith('model') and item.endswith('bin')]
         model_nums = []

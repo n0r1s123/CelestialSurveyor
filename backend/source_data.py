@@ -15,6 +15,7 @@ import time
 import numpy as np
 import tqdm
 import decimal
+from PIL import Image
 
 from auto_stretch.stretch import Stretch
 from xisf import XISF
@@ -29,7 +30,7 @@ logger = get_logger()
 from backend.progress_bar import AbstractProgressBar
 
 
-ALIGNMENT_OFFSET = 0.01
+ALIGNMENT_OFFSET = 0.5
 
 
 def to_gray(img_data):
@@ -59,6 +60,7 @@ def get_master_dark( folder, to_debayer=False, darks_number_limit=10):
             img = np.swapaxes(img, 0, 2)
         if to_debayer and img.shape[2] == 1:
             img = debayer(img)
+        img /= 256 * 256 - 1
         imgs.append(img)
     imgs = np.array(imgs)
     master_dark = np.average(imgs, axis=0)
@@ -83,11 +85,11 @@ def get_master_flat(flat_folder, dark_flat_folder, to_debayer=False, flats_numbe
             img = np.swapaxes(img, 0, 2)
         if to_debayer and img.shape[2] == 1:
             img = debayer(img)
+        img /= 256 * 256 - 1
         imgs.append(img - flat_dark)
     imgs = np.array(imgs)
     master_flat = np.average(imgs, axis=0)
     return master_flat
-
 
 
 def process_img_data(img_data, non_linear):
@@ -123,7 +125,7 @@ def __get_datetime_from_str(timestamp):
     return timestamp
 
 
-def load_fits(file_path, non_linear=False, load_image=True, to_debayer=False):
+def load_fits(file_path, load_image=True, to_debayer=False):
     with astropy.io.fits.open(file_path) as hdul:
         header = hdul[0].header
         exposure = float(header['EXPTIME'])
@@ -136,13 +138,14 @@ def load_fits(file_path, non_linear=False, load_image=True, to_debayer=False):
                 img_data = np.swapaxes(img_data, 0, 2)
             if to_debayer and img_data.shape[2] == 1:
                 img_data = np.array(debayer(img_data), dtype='float32')
-
+            # Normalize
+            img_data /= 256 * 256 - 1
         else:
             img_data = None
     return img_data, timestamp, exposure
 
 
-def load_xisf(file_path, non_linear=False, load_image=True, to_debayer=False):
+def load_xisf(file_path, load_image=True, to_debayer=False):
     _ = to_debayer
     xisf = XISF(file_path)
     img_meta = xisf.get_images_metadata()[0]
@@ -159,54 +162,47 @@ def load_xisf(file_path, non_linear=False, load_image=True, to_debayer=False):
 
 def load_worker(load_fps, num_list, load_func, non_linear, progress_queue: Queue, error_queue: Queue,
                 reference_image, to_align, to_skip_bad, to_debayer, master_dark, master_flat):
+    reference_image = reference_image * reference_image
+    # reference_image[reference_image < 0] = 0
     try:
-        # img_buf_name, y_buf_name, x_buf_name = shared_mem_names
-        # imgs_buf = SharedMemory(name=img_buf_name, create=False)
-        # loaded_images = np.ndarray(imgs_shape, dtype='float32', buffer=imgs_buf.buf)
-        # y_boar_buf = SharedMemory(name=y_buf_name, create=False)
-        # y_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=y_boar_buf.buf)
-        # x_boar_buf = SharedMemory(name=x_buf_name, create=False)
-        # x_boar = np.ndarray((imgs_shape[0], 2), dtype='uint16', buffer=x_boar_buf.buf)
         for num, fp in zip(num_list, load_fps):
             if not error_queue.empty():
                 return
             rejected = False
-            img_data, _, _ = load_func(fp, non_linear, load_image=True, to_debayer=to_debayer)
+            img_data, _, _ = load_func(fp, load_image=True, to_debayer=to_debayer)
             if master_dark is not None:
                 img_data -= master_dark
             if master_flat is not None:
                 img_data /= master_flat
+            img_data = process_img_data(img_data, non_linear)
+            # if not non_linear:
+            #     img_data = stretch_image(img_data)
+            # if to_align:
+            #     img_data += ALIGNMENT_OFFSET
             if to_align:
-                img_data += ALIGNMENT_OFFSET
                 try:
-                    img_data, _ = aa.register(img_data, reference_image, fill_value=0)
-                except (aa.MaxIterError, ValueError):
+                    img_data, _ = aa.register(img_data, reference_image, 0, max_control_points=50, min_area=5)
+                except:
                     if to_skip_bad:
                         rejected = True
                     else:
                         raise Exception("Unable to make star alignment. Try to delete bad images or use --skip_bad key")
             if not rejected:
-
-                img_data = process_img_data(img_data, non_linear)
                 y_boarders, x_boarders = SourceData.crop_raw(img_data, to_do=False)
+
                 y_boarders, x_boarders = SourceData.crop_fine(
                     img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
-                if to_align:
-                    img_data -= ALIGNMENT_OFFSET
-                if not non_linear:
-                    img_data = stretch_image(img_data)
-                # y_boar[num] = np.array(y_boarders, dtype="uint16")
-                # x_boar[num] = np.array(x_boarders, dtype="uint16")
-                # loaded_images[num] = img_data
+                # if to_align:
+                #     img_data -= ALIGNMENT_OFFSET
                 progress_queue.put((num, rejected, img_data, np.array(y_boarders, dtype="uint16"), np.array(x_boarders, dtype="uint16")))
             else:
-                progress_queue.put((num, rejected, None, None, None))
-        # imgs_buf.close()
+                progress_queue.put((num, rejected, None, np.array((0, 0), dtype="uint16"), np.array((0, 0), dtype="uint16")))
     except:
         error_trace = traceback.format_exc()
         progress_queue.put(error_trace)
         error_queue.put(error_trace)
         return
+
 
 def get_file_paths(folder):
     return [os.path.join(folder, item) for item in os.listdir(folder) if item.lower().endswith(".xisf") or item.lower().endswith(".fit") or item.lower().endswith(".fits")]
@@ -214,11 +210,11 @@ def get_file_paths(folder):
 
 class SourceData:
     ZERO_TOLERANCE = 100
-    BOARDER_OFFSET = 10
+    BOARDER_OFFSET = 20
     X_SPLITS = 1
     Y_SPLITS = 1
 
-    def __init__(self, file_list, non_linear=False, to_align=True, to_skip_bad=False, num_from_session=None, to_debayer=False, darks=None):
+    def __init__(self, file_list, non_linear=False, to_align=True, to_skip_bad=False, num_from_session=None, to_debayer=False, dark_folder=None, flat_folder=None, dark_flat_folder=None):
         self.file_list = file_list
         self.to_align = to_align
         self.to_skip_bad = to_skip_bad
@@ -233,7 +229,9 @@ class SourceData:
         self.images = None
         self.num_from_session = num_from_session
         self.to_debayer = to_debayer
-        self.darks = darks
+        self.dark_folder = dark_folder
+        self.flat_folder = flat_folder
+        self.dark_flat_folder = dark_flat_folder
 
     def __del__(self):
         if isinstance(self.imgs_shm, SharedMemory):
@@ -251,21 +249,11 @@ class SourceData:
     def exposures(self):
         return tuple(item[2] for item in self.timestamped_file_list)
 
-    # @classmethod
-    # def stretch_image(cls, img_data):
-    #     return Stretch().stretch(img_data) + ALIGNMENT_OFFSET
-
-    @classmethod
-    def to_gray(cls, img_data):
-        return np.dot(img_data[..., :3], [0.2989, 0.5870, 0.1140])
-
     @classmethod
     def crop_image(cls, img_data, y_borders, x_borders):
         x_left, x_right = x_borders
         y_top, y_bottom = y_borders
         return img_data[y_top: y_bottom, x_left: x_right]
-
-
 
     @classmethod
     def crop_raw(cls, img_data, to_do=True):
@@ -371,7 +359,7 @@ class SourceData:
             else:
                 raise ValueError("xisf or fit/fits files are allowed")
 
-            _, timestamp, exposure = load_func(fp, self.non_linear, load_image=False)
+            _, timestamp, exposure = load_func(fp, load_image=False)
             timestamped_file_list.append((fp, timestamp, exposure))
         timestamped_file_list.sort(key=lambda x: x[1])
 
@@ -398,49 +386,44 @@ class SourceData:
         self.timestamped_file_list = list(zip(file_paths, timestamps, exposures))
 
     @arg_logger
-    def load_images(self, to_debayer: bool = False, dark_folder=None, flat_folder=None, dark_flat_folder=None, progress_bar: Optional[AbstractProgressBar] = None, frame: Optional[wx.Frame] = None):
+    def load_images(self, progress_bar: Optional[AbstractProgressBar] = None, frame: Optional[wx.Frame] = None):
         to_align = self.to_align
         non_linear = self.non_linear
+        to_debayer = self.to_debayer
         file_paths = [item[0] for item in self.timestamped_file_list]
-        if progress_bar:
-            progress_bar.set_total(len(file_paths))
-
         if file_paths[0].lower().endswith(".xisf"):
             load_func = load_xisf
         elif file_paths[0].lower().endswith(".fits") or file_paths[0].lower().endswith(".fit"):
             load_func = load_fits
         else:
             raise ValueError("xisf or fit/fits files are allowed")
-        img, _, _ = load_func(file_paths[0], non_linear, True, to_debayer=to_debayer)
-        logger.log.debug(f"Initial image shape: {img.shape}")
+        template_img, _, _ = load_func(file_paths[0], True, to_debayer=to_debayer)
+        logger.log.debug(f"Initial image shape: {template_img.shape}")
         mem_size = 1
-        for n in (len(file_paths), *img.shape):
+        for n in (len(file_paths), *template_img.shape):
             mem_size = mem_size * n
         mem_size = mem_size * 4
         logger.log.debug(f"Allocating memory size: {mem_size // (1024 * 1024)} Mb")
-        # self.imgs_shm = SharedMemory(size=mem_size, create=True)
         logger.log.debug(f"Allocated memory size: {mem_size // (1024 * 1024)} Mb")
-        images_shape = (len(file_paths), *img.shape[:2])
+        images_shape = (len(file_paths), *template_img.shape[:2])
         imgs = np.ndarray(images_shape, dtype='float32')
 
         y_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16')
         x_boaredrs = np.ndarray((len(file_paths), 2), dtype='uint16')
-
-
         master_dark = None
         master_flat = None
-        if dark_folder is not None and os.path.exists(dark_folder):
-            master_dark = get_master_dark(dark_folder, to_debayer=to_debayer)
-        if flat_folder is not None and dark_flat_folder is not None and os.path.exists(flat_folder) and \
-                os.path.exists(dark_flat_folder):
-            master_flat = get_master_flat(flat_folder, dark_flat_folder, to_debayer=to_debayer)
+        if self.dark_folder is not None and os.path.exists(self.dark_folder):
+            master_dark = get_master_dark(self.dark_folder, to_debayer=to_debayer)
+        if self.flat_folder is not None and self.dark_flat_folder is not None and os.path.exists(self.flat_folder) and \
+                os.path.exists(self.dark_flat_folder):
+            master_flat = get_master_flat(self.flat_folder, self.dark_flat_folder, to_debayer=to_debayer)
         if master_dark is not None:
-            img -= master_dark
+            template_img -= master_dark
         if master_flat is not None:
-            img /= master_flat
-
-
-
+            template_img /= master_flat
+        template_img = process_img_data(template_img, non_linear)
+        # if not non_linear:
+        #     template_img = stretch_image(template_img)
         worker_num = min((os.cpu_count(), 4))
         processes = []
         progress_queue = Queue()
@@ -455,7 +438,7 @@ class SourceData:
                     non_linear,
                     progress_queue,
                     error_queue,
-                    img,
+                    template_img,
                     to_align,
                     True,
                     to_debayer,
@@ -466,6 +449,8 @@ class SourceData:
         for proc in processes:
             proc.start()
 
+        if progress_bar:
+            progress_bar.set_total(len(file_paths))
         rejected_list = []
         for _ in range(len(file_paths)):
             res = progress_queue.get()
@@ -480,7 +465,9 @@ class SourceData:
             x_boaredrs[num] = loaded_x_borders
             if rejected:
                 rejected_list.append(num)
-                logger.log.info(f"Rejected file: {self.timestamped_file_list[num][0]}")
+                logger.log.warning(f"Rejected file: {self.timestamped_file_list[num][0]}")
+            else:
+                logger.log.debug(f"Loaded file: {self.timestamped_file_list[num][0]}")
 
             if progress_bar:
                 progress_bar.update()
@@ -502,7 +489,6 @@ class SourceData:
         x_left, x_right = x_boarders
         y_top, y_bottom = y_boarders
         imgs = imgs[:, y_top: y_bottom, x_left: x_right]
-        # imgs = self.chop_imgs(imgs)
         self.images = imgs
         self.img_shape = self.images[0].shape
         if frame:
@@ -576,7 +562,8 @@ class SourceData:
         ]
 
     @arg_logger
-    def gen_splits(self, y_splits, x_splits, to_align=True, use_img_mask=None, to_skip_bad=True):
+    def gen_splits(self, y_splits, x_splits, to_align=True, use_img_mask=None, to_skip_bad=True, output_folder=None):
+        logger.log.info(f"Splitting images by {y_splits}x{x_splits}={y_splits*x_splits} parts")
         shape = self.images[0].shape
         y_shape, x_shape = shape[:2]
         y_split_size = (y_shape - 2 * self.BOARDER_OFFSET) // y_splits
@@ -592,33 +579,61 @@ class SourceData:
                               y_offset - self.BOARDER_OFFSET: y_offset + y_split_size + self.BOARDER_OFFSET,
                               x_offset - self.BOARDER_OFFSET: x_offset + x_split_size + self.BOARDER_OFFSET]
                 if to_align:
-                    aligned = np.ndarray((len(self.images), y_split_size, x_split_size), dtype='float32')
-                    aligned[0] = not_aligned[0, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
+                    aligned = np.ndarray((not_aligned.shape[0], not_aligned.shape[1] - 2 * self.BOARDER_OFFSET, not_aligned.shape[2] - 2 * self.BOARDER_OFFSET,), dtype='float32')
+                    reference = np.copy(not_aligned[0])
+
+                    aligned[0] = reference[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
+                    if not self.non_linear:
+                        aligned[0] = stretch_image(aligned[0])
+                    # aligned[0] = reference[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                     bad = []
                     for num in range(1, len(not_aligned)):
                         try:
-                            new_img, _ = aa.register(not_aligned[num], aligned[0], fill_value=0)
+                            # image_to_align = stretch_image(not_aligned[num])
+                            image_to_align = not_aligned[num]
+                            # new_img, _ = aa.register(not_aligned[num], reference, fill_value=0, max_control_points=50, min_area=3)
+                            transform, *_ = aa.find_transform(not_aligned[num], reference, max_control_points=50, min_area=3)
+                            new_img, _ = aa.apply_transform(transform, image_to_align, reference, fill_value=0)
+                            new_img = new_img[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
+                            if not self.non_linear:
+                                new_img = stretch_image(new_img)
                             aligned[num] = new_img
+                            # aligned[num] = new_img[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                         except:
                             if to_skip_bad:
+                                logger.log.info(f"Frame {num} in split {y_num} {x_num} was not aligned")
                                 bad.append(num)
                                 new_use_img_mask[num] = False
-
                             else:
                                 raise Exception(
                                     "Unable to make star alignment. Try to delete bad images or use --skip_bad key")
-                    # if bad:
-                    #     aligned = np.delete(aligned, bad, axis=0)
+                    # aligned = aligned[:, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                 else:
                     aligned = not_aligned[:, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
+                    if not self.non_linear:
+                        for num in range(len(aligned)):
+                            aligned[num] = stretch_image(aligned[num])
 
-                logger.log.debug("SPLIT GENERATED")
+                # if output_folder:
+                #     frames = np.copy(aligned)
+                #     frames = frames * 255
+                #     new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in frames]
+                #     new_frames[0].save(
+                #         os.path.join(output_folder, f"{y_offset}_{x_offset}.gif"),
+                #         save_all=True,
+                #         append_images=new_frames[1:],
+                #         duration=200,
+                #         loop=0)
+
                 yield aligned, y_offset, x_offset, new_use_img_mask
 
     def get_max_image(self, img_mask=None):
         if img_mask is None:
             img_mask = [True] * len(self.images)
-        return np.amax(self.images[img_mask], axis=0)
+        max_image = np.amax(self.images[img_mask], axis=0)
+        if not self.non_linear:
+            max_image = stretch_image(max_image)
+        return max_image
 
     @classmethod
     def get_shrinked_img_series(cls, images, size, y, x, img_mask=None):
@@ -629,14 +644,15 @@ class SourceData:
 
     @classmethod
     def prepare_images(cls, imgs):
-        imgs = np.array(
-            [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(len(imgs))])
+        imgs = np.array([stretch_image(item) for item in imgs])
+        # imgs = np.array(
+        #     [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(len(imgs))])
         imgs[imgs < 0] = 0
-        imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs) + 0.00000001)
+        if np.max(imgs) - np.min(imgs) != 0:
+            imgs = (imgs - np.min(imgs)) / (np.max(imgs) - np.min(imgs))
         imgs.shape = (*imgs.shape, 1)
         return imgs
 
-    # @staticmethod
     def adjust_series_to_min_len(self, imgs, timestamps, min_len=8):
         assert len(imgs) == len(timestamps), \
             f"Images and timestamp amount mismatch: len(imgs)={len(imgs)}. len(timestamps)={len(timestamps)}"
@@ -656,4 +672,3 @@ class SourceData:
         new_timestamps = [item[1] for item in timestamped_images]
         new_imgs = np.array(new_imgs)
         return new_imgs, new_timestamps
-

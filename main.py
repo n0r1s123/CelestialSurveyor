@@ -9,12 +9,14 @@ from backend.source_data import SourceData, get_file_paths
 from user_interface.main_window import start_ui
 from logger.logger import get_logger
 from backend.progress_bar import ProgressBarFactory
+import multiprocessing
 
 
 logger = get_logger()
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     version = "0.2.0"
     arg_parser = argparse.ArgumentParser(
         prog='CelestialSurveyor',
@@ -28,7 +30,13 @@ if __name__ == '__main__':
     arg_parser.add_argument('-o', '--output_folder', dest='output_folder', type=str, required=False,
                             help='Path to the folder where results will be stored')
     arg_parser.add_argument('--dark_folder', dest='dark_folder', type=str, required=False, default=None,
-                            help='Path to the folder with dark frames (Optional)')
+                            help='Path to the folder with Dark frames (Optional)')
+    arg_parser.add_argument('--flat_folder', dest='flat_folder', type=str, required=False, default=None,
+                            help='Path to the folder with Flat frames (Optional). Work only if DarkFlat '
+                                 'folder is provided')
+    arg_parser.add_argument('--dark_flat_folder', dest='dark_flat_folder', type=str, required=False, default=None,
+                            help='Path to the folder with DarkFlat frames (Optional). Work only if DarkFlat '
+                                 'folder is provided')
     arg_parser.add_argument('-m', '--model_path', dest='model_path', type=str, default="default", required=False,
                             help='Path to the AI model file')
     arg_parser.add_argument('-n', '--non_linear', dest='non_linear', action="store_true", required=False,
@@ -77,13 +85,16 @@ if __name__ == '__main__':
             non_linear=provided_args.non_linear,
             to_align=provided_args.initial_alignment,
             to_skip_bad=not provided_args.not_skip_bad,
-            num_from_session=15
+            num_from_session=15,
+            dark_folder=provided_args.dark_folder,
+            flat_folder=provided_args.flat_folder,
+            dark_flat_folder=provided_args.dark_flat_folder,
+            to_debayer=provided_args.debayer,
+
         )
         source_data.load_headers_and_sort()
         source_data.load_images(
             progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()),
-            to_debayer=provided_args.debayer,
-            dark_folder=provided_args.dark_folder,
         )
         find_asteroids(
             source_data=source_data,

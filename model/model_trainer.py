@@ -3,7 +3,7 @@ import os
 import tensorflow as tf
 from backend.source_data import SourceData, get_file_paths
 from training_dataset import TrainingDataset
-from model_builder import build_rnn_model, encrypt_model
+from model_builder import build_model, encrypt_model
 from collections import namedtuple
 from logger.logger import Logger
 logger = Logger()
@@ -22,19 +22,19 @@ folder_properties = namedtuple(
 def main():
     logger.log.info(tf.__version__)
     input_shape = (None, 64, 64, 1)
-    load_model_name = "model52"
-    save_model_name = "model61"
+    load_model_name = "model104"
+    save_model_name = "model106"
 
     # Build the model
 
     # Compile the model
-    # model = build_rnn_model()
-    # model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model = build_model()
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
     # Load model
-    model = tf.keras.models.load_model(
-        f'{load_model_name}.h5'
-    )
+    # model = tf.keras.models.load_model(
+    #     f'{load_model_name}.h5'
+    # )
 
     # folders = [
     #     # folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
@@ -58,10 +58,10 @@ def main():
     #     folder_properties('D:\\Boris\\astro\\Veil\\Light\\Part_2', non_linear=False, to_align=True, debayer=True, num_from_session=20),
     # ]
     folders = [
-        folder_properties('D:\\Boris\\astro\\Antares\\Part1\\Night1', non_linear=False, to_align=True,
-                          num_from_session=None, debayer=True, darks='D:\\Boris\\astro\\Antares\\Dark'),
-        folder_properties('D:\\Boris\\astro\\Antares\\Part2\\Night2', non_linear=False, to_align=True,
-                          num_from_session=None, debayer=True),
+        # folder_properties('D:\\Boris\\astro\\Antares\\Part1\\Night1', non_linear=False, to_align=True,
+        #                   num_from_session=None, debayer=True, darks='D:\\Boris\\astro\\Antares\\Dark'),
+        # folder_properties('D:\\Boris\\astro\\Antares\\Part2\\Night2', non_linear=False, to_align=True,
+        #                   num_from_session=None, debayer=True),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Light', non_linear=False, to_align=True,
         #                   num_from_session=None, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Dark'),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Light', non_linear=False, to_align=True,
@@ -70,16 +70,44 @@ def main():
         #                   num_from_session=6, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Dark'),
         # folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\Light', non_linear=False, to_align=True,
         #                   num_from_session=None, debayer=True),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Andromeda\\Light\\Night3', non_linear=False, to_align=True,
-                          num_from_session=None, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\Andromeda\\Dark_600'),
-        folder_properties('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True,
-                          num_from_session=8, debayer=True, darks='D:\\Boris\\astro\\M78\\Dark'),
-        folder_properties('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True,
-                          num_from_session=2, debayer=True, darks='D:\\Boris\\astro\\M78\\Dark'),
-        folder_properties('D:\\Boris\\astro\\NGC6888\\Light', non_linear=False, to_align=True,
-                          num_from_session=4, debayer=True, darks='D:\\Boris\\astro\\NGC6888\\Dark'),
-        folder_properties('D:\\Boris\\astro\\seahorse\\Light', non_linear=False, to_align=True,
-                          num_from_session=50, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\SeaHorse\\Dark'),
+        # folder_properties('C:\\Users\\bsolomin\\Astro\\Andromeda\\Light\\Night3', non_linear=False, to_align=True,
+        #                   num_from_session=None, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\Andromeda\\Dark_600'),
+        # folder_properties('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True,
+        #                   num_from_session=8, debayer=True, darks='D:\\Boris\\astro\\M78\\Dark'),
+        # folder_properties('D:\\Boris\\astro\\Auriga\\Light', non_linear=False, to_align=True,
+        #                   num_from_session=2, debayer=True, darks='D:\\Boris\\astro\\M78\\Dark'),
+        # folder_properties('D:\\Boris\\astro\\NGC6888\\Light', non_linear=False, to_align=True,
+        #                   num_from_session=4, debayer=True, darks='D:\\Boris\\astro\\NGC6888\\Dark'),
+        # folder_properties('D:\\Boris\\astro\\seahorse\\Light', non_linear=False, to_align=True,
+        #                   num_from_session=50, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\SeaHorse\\Dark'),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False,
+                          num_from_session=None, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped', non_linear=True, to_align=False,
+                          num_from_session=None, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped', non_linear=True, to_align=False,
+                          num_from_session=None, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped', non_linear=True, to_align=False,
+                          num_from_session=None, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped', non_linear=True, to_align=False,
+                          num_from_session=None, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1', non_linear=True, to_align=False,
+                          num_from_session=None, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False,
+                          num_from_session=5, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped', non_linear=True, to_align=False,
+                          num_from_session=5, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped', non_linear=True, to_align=False,
+                          num_from_session=3, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped', non_linear=True, to_align=False,
+                          num_from_session=6, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped', non_linear=True, to_align=False,
+                          num_from_session=7, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1', non_linear=True, to_align=False,
+                          num_from_session=4, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\M78\\registered\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB', non_linear=False, to_align=False,
+                          num_from_session=None, debayer=False),
+        folder_properties('C:\\Users\\bsolomin\\Astro\\M81\\cropped', non_linear=True, to_align=False,
+                          num_from_session=15, debayer=False),
     ]
 
 
@@ -93,7 +121,7 @@ def main():
             num_from_session=item.num_from_session,
             to_skip_bad=True,
             to_debayer=item.debayer,
-            darks=item.darks,
+            dark_folder=item.darks,
         ))
 
     dataset = TrainingDataset(source_datas)
@@ -104,7 +132,7 @@ def main():
     early_stopping_monitor = tf.keras.callbacks.EarlyStopping(
         monitor='val_loss',
         min_delta=0,
-        patience=4,
+        patience=8,
         verbose=1,
         mode='min',
         baseline=None,

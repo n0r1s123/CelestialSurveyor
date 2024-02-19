@@ -52,7 +52,7 @@ class ProgressBarCli(AbstractProgressBar):
         self.progress_bar.update()
 
     def complete(self):
-        pass
+        self.progress_bar.close()
 
     def clear(self):
         self.progress_bar.clear()

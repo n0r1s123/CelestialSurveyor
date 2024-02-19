@@ -8,7 +8,7 @@ from PIL import Image
 import threading
 from backend.find_asteroids import find_asteroids
 
-from backend.source_data import SourceData
+from backend.source_data import SourceData, stretch_image
 import wx.lib.scrolledpanel as scrolled
 from logger.logger import get_logger
 from backend.progress_bar import ProgressBarFactory
@@ -267,7 +267,6 @@ class MyFrame(wx.Frame):
             for obj in objects:
                 self.checkbox_list.SetCheckState(obj, True)
             self.checkbox_list.RefreshObjects(objects)
-            # self.checkbox_list.Refresh()
         dialog.Destroy()
         self.progress_bar.SetValue(0)
         self.process_progress_bar.SetValue(0)
@@ -279,7 +278,7 @@ class MyFrame(wx.Frame):
             self.chk_non_linear.Enable(True)
 
     def on_load_files(self, event):
-        logger.log.debug("Loading files is initialized by user")
+
         self.progress_bar.SetValue(0)
         new_timestamped_file_list = []
         objects = self.checkbox_list.GetObjects()
@@ -304,21 +303,21 @@ class MyFrame(wx.Frame):
         to_align = self.chk_to_align.GetValue()
         self.source_data.to_align = to_align
 
-        logger.log.info("Starting image loading...")
+        logger.log.info(f"Loading {len(new_timestamped_file_list)} images...")
         dark_path = self.dark_path_picker.GetPath()
         dark_path = dark_path if dark_path else None
         flat_path = self.flat_path_picker.GetPath()
         flat_path = flat_path if flat_path else None
         dark_flat_path = self.dark_flat_path_picker.GetPath()
         dark_flat_path = dark_flat_path if dark_flat_path else None
+        self.source_data.dark_folder = dark_path
+        self.source_data.flat_folder = flat_path
+        self.source_data.dark_flat_folder = dark_flat_path
+        self.source_data.to_debayer = self.to_debayer.GetValue()
+        self.source_data.non_linear = self.chk_non_linear.GetValue()
         self.process_thread = threading.Thread(target=self.source_data.load_images, kwargs={
             "progress_bar": ProgressBarFactory.create_progress_bar(self.progress_bar),
             "frame": self,
-            "to_debayer": self.to_debayer.GetValue(),
-            "dark_folder": dark_path, 
-            "flat_folder": flat_path,
-            "dark_flat_folder": dark_flat_path,
-
         })
         self.process_thread.start()
 
@@ -334,7 +333,10 @@ class MyFrame(wx.Frame):
             self.checkbox_list.SetCheckState(obj, True)
         self.checkbox_list.SelectObject(objects[0])
         self.checkbox_list.RefreshObjects(objects)
-        img_to_draw = (self.source_data.images[0] * 255).astype('uint8')
+        img_to_draw = self.source_data.images[0]
+        if not self.source_data.non_linear:
+            img_to_draw = stretch_image(img_to_draw)
+        img_to_draw = (img_to_draw * 255).astype('uint8')
         self.draw_panel.image_array = img_to_draw
         self.draw_panel.Refresh()
         self.chk_to_second_align.Enable(True)
@@ -353,7 +355,10 @@ class MyFrame(wx.Frame):
                     break
             else:
                 raise ValueError(f"{'obj.file_path'} is not in file list")
-            img_to_draw = (self.source_data.images[image_idx] * 255).astype('uint8')
+            img_to_draw = self.source_data.images[image_idx]
+            if not self.source_data.non_linear:
+                img_to_draw = stretch_image(img_to_draw)
+            img_to_draw = (img_to_draw * 255).astype('uint8')
             self.draw_panel.image_array = img_to_draw
             self.draw_panel.Refresh()
 

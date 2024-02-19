@@ -10,7 +10,7 @@ import tifffile
 from collections.abc import Sequence
 from PIL import Image
 
-from backend.source_data import SourceData
+from backend.source_data import SourceData, stretch_image
 from logger.logger import get_logger
 from backend.progress_bar import ProgressBarFactory
 logger = get_logger()
@@ -26,10 +26,11 @@ class TrainingDataset:
         for item in self.source_datas:
             item.load_headers_and_sort()
             item.load_images(
-                progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()),
-                to_debayer=item.to_debayer,
-                dark_folder=item.darks)
+                progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()))
             item.load_exclusion_boxes()
+            if not item.non_linear:
+                for num in range(len(item.images)):
+                    item.images[num] = stretch_image(item.images[num])
 
     @classmethod
     def _load_star_samples(cls):
@@ -351,9 +352,9 @@ class TrainingDataset:
                     duration=200,
                     loop=0)
         # return [X_batch, TS_batch, X_batch[:, ::10], TS_batch[:, ::10]], y_batch
-        return [X_batch, TS_batch], y_batch
+        # return [X_batch, TS_batch], y_batch
         # return [X_batch, X_batch[:, ::4], TS_batch], y_batch
-        # return X_batch, y_batch
+        return X_batch, y_batch
 
     def batch_generator(self, batch_size):
         bla = True

@@ -3,9 +3,9 @@
 block_cipher = None
 
 a = Analysis(
-    ['try_model.py'],
+    ['main.py'],
     pathex=['C:\\git\\object_recognition\\'],
-    binaries=[('.\\model31.bin', '.\\')],
+    binaries=[('.\\backend\\model52.bin', '.\\')],
     datas=[],
     hiddenimports=[],
     hookspath=[],
