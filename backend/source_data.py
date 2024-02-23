@@ -20,11 +20,13 @@ from PIL import Image
 from auto_stretch.stretch import Stretch
 from xisf import XISF
 from bs4 import BeautifulSoup
-from multiprocessing import Process, Queue
-from multiprocessing.shared_memory import SharedMemory
+from multiprocessing import Process, Queue, current_process
+from queue import Empty
+# from multiprocessing.shared_memory import SharedMemory
 import astroalign as aa
 from logger.logger import get_logger, arg_logger
 import cv2
+from threading import Event
 logger = get_logger()
 
 from backend.progress_bar import AbstractProgressBar
@@ -232,14 +234,15 @@ class SourceData:
         self.dark_folder = dark_folder
         self.flat_folder = flat_folder
         self.dark_flat_folder = dark_flat_folder
+        self.load_processes = []
 
-    def __del__(self):
-        if isinstance(self.imgs_shm, SharedMemory):
-            self.imgs_shm.unlink()
-        if isinstance(self.y_boarders_shm, SharedMemory):
-            self.y_boarders_shm.unlink()
-        if isinstance(self.x_boarders_shm, SharedMemory):
-            self.x_boarders_shm.unlink()
+    # def __del__(self):
+    #     if isinstance(self.imgs_shm, SharedMemory):
+    #         self.imgs_shm.unlink()
+    #     if isinstance(self.y_boarders_shm, SharedMemory):
+    #         self.y_boarders_shm.unlink()
+    #     if isinstance(self.x_boarders_shm, SharedMemory):
+    #         self.x_boarders_shm.unlink()
 
     @property
     def timestamps(self):
@@ -386,7 +389,7 @@ class SourceData:
         self.timestamped_file_list = list(zip(file_paths, timestamps, exposures))
 
     @arg_logger
-    def load_images(self, progress_bar: Optional[AbstractProgressBar] = None, frame: Optional[wx.Frame] = None):
+    def load_images(self, progress_bar: Optional[AbstractProgressBar] = None, ui_frame: Optional[wx.Frame] = None, event: Optional[Event] = None):
         to_align = self.to_align
         non_linear = self.non_linear
         to_debayer = self.to_debayer
@@ -425,13 +428,13 @@ class SourceData:
         # if not non_linear:
         #     template_img = stretch_image(template_img)
         worker_num = min((os.cpu_count(), 4))
-        processes = []
+        self.load_processes = []
         progress_queue = Queue()
         error_queue = Queue()
         for num in range(worker_num):
             logger.log.debug(f"Running loading process {num}")
-            processes.append(
-                Process(target=load_worker, args=(
+            self.load_processes.append(
+                Process(target=load_worker, name="load_proc", args=(
                     file_paths[num::worker_num],
                     list(range(len(file_paths)))[num::worker_num],
                     load_func,
@@ -446,17 +449,27 @@ class SourceData:
                     master_flat
                 ))
             )
-        for proc in processes:
+        for proc in self.load_processes:
             proc.start()
 
         if progress_bar:
             progress_bar.set_total(len(file_paths))
         rejected_list = []
         for _ in range(len(file_paths)):
-            res = progress_queue.get()
+            res = None
+            while res is None:
+                try:
+                    res = progress_queue.get(timeout=0.1)
+                except Empty:
+                    pass
+                if isinstance(event, Event) and event.is_set():
+                    logger.log.info("Stopping loading images")
+                    for item in self.load_processes:
+                        item.kill()
+                    return
             if isinstance(res, str):
                 logger.log.error(f"Unexpected error happened during loading images:\n{res}")
-                for proc in processes:
+                for proc in self.load_processes:
                     proc.join()
                 sys.exit(-1)
             num, rejected, loaded_img, loaded_y_borders, loaded_x_borders = res
@@ -472,8 +485,9 @@ class SourceData:
             if progress_bar:
                 progress_bar.update()
 
-        for proc in processes:
+        for proc in self.load_processes:
             proc.join()
+        self.load_processes = []
 
         if len(rejected_list):
             imgs = np.delete(imgs, rejected_list, axis=0)
@@ -491,8 +505,8 @@ class SourceData:
         imgs = imgs[:, y_top: y_bottom, x_left: x_right]
         self.images = imgs
         self.img_shape = self.images[0].shape
-        if frame:
-            wx.CallAfter(frame.on_load_finished)
+        if ui_frame:
+            wx.CallAfter(ui_frame.on_load_finished)
 
     @classmethod
     def normalize_timestamps(cls, timestamps):
@@ -583,8 +597,8 @@ class SourceData:
                     reference = np.copy(not_aligned[0])
 
                     aligned[0] = reference[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
-                    if not self.non_linear:
-                        aligned[0] = stretch_image(aligned[0])
+                    # if not self.non_linear:
+                    #     aligned[0] = stretch_image(aligned[0])
                     # aligned[0] = reference[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                     bad = []
                     for num in range(1, len(not_aligned)):
@@ -595,8 +609,8 @@ class SourceData:
                             transform, *_ = aa.find_transform(not_aligned[num], reference, max_control_points=50, min_area=3)
                             new_img, _ = aa.apply_transform(transform, image_to_align, reference, fill_value=0)
                             new_img = new_img[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
-                            if not self.non_linear:
-                                new_img = stretch_image(new_img)
+                            # if not self.non_linear:
+                            #     new_img = stretch_image(new_img)
                             aligned[num] = new_img
                             # aligned[num] = new_img[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                         except:
@@ -610,9 +624,9 @@ class SourceData:
                     # aligned = aligned[:, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                 else:
                     aligned = not_aligned[:, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
-                    if not self.non_linear:
-                        for num in range(len(aligned)):
-                            aligned[num] = stretch_image(aligned[num])
+                    # if not self.non_linear:
+                    #     for num in range(len(aligned)):
+                    #         aligned[num] = stretch_image(aligned[num])
 
                 # if output_folder:
                 #     frames = np.copy(aligned)
@@ -643,8 +657,9 @@ class SourceData:
         return shrinked
 
     @classmethod
-    def prepare_images(cls, imgs):
-        imgs = np.array([stretch_image(item) for item in imgs])
+    def prepare_images(cls, imgs, non_linear=False):
+        if not non_linear:
+            imgs = np.array([stretch_image(item) for item in imgs])
         # imgs = np.array(
         #     [np.amax(np.array([imgs[num] - imgs[0], imgs[num] - imgs[-1]]), axis=0) for num in range(len(imgs))])
         imgs[imgs < 0] = 0

@@ -17,7 +17,7 @@ logger = get_logger()
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
-    version = "0.2.0"
+    version = "0.2.1"
     arg_parser = argparse.ArgumentParser(
         prog='CelestialSurveyor',
         description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '
@@ -85,7 +85,7 @@ if __name__ == '__main__':
             non_linear=provided_args.non_linear,
             to_align=provided_args.initial_alignment,
             to_skip_bad=not provided_args.not_skip_bad,
-            num_from_session=15,
+            num_from_session=None,
             dark_folder=provided_args.dark_folder,
             flat_folder=provided_args.flat_folder,
             dark_flat_folder=provided_args.dark_flat_folder,

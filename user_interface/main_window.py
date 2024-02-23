@@ -1,5 +1,6 @@
 # import os
 import os.path
+import time
 
 import wx
 # import numpy as np
@@ -12,6 +13,7 @@ from backend.source_data import SourceData, stretch_image
 import wx.lib.scrolledpanel as scrolled
 from logger.logger import get_logger
 from backend.progress_bar import ProgressBarFactory
+from threading import Event
 
 logger = get_logger()
 
@@ -83,6 +85,30 @@ class ImagePanel(scrolled.ScrolledPanel):
         return bitmap
 
 
+class ProgressFrame(wx.Frame):
+    def __init__(self, parent, title):
+        super().__init__(parent=parent, title=title, size=(500, 200))
+        self.parent = parent
+        panel = wx.Panel(self)
+        self.label = wx.StaticText(panel, label="Working...")
+        self.progress = wx.Gauge(panel, range=100, size=(450, 30))
+        self.cancel_button = wx.Button(panel, label='Cancel')
+        self.Bind(wx.EVT_BUTTON, self.on_cancel, self.cancel_button)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self.label, 0, wx.ALL | wx.LEFT, 5)
+        sizer.Add(self.progress, 0, wx.ALL | wx.CENTER, 5)
+        sizer.Add(self.cancel_button, 0, wx.ALL | wx.CENTER, 5)
+        panel.SetSizer(sizer)
+
+    def on_cancel(self, event):
+        self.label.SetLabel("Stopping...")
+        if self.parent.source_data.load_processes:
+            while any(item.pid is None for item in self.parent.source_data.load_processes):
+                time.sleep(0.1)
+        self.parent.stop_event.set()
+        self.Close()
+
+
 class MyFrame(wx.Frame):
     def __init__(self, *args, **kw):
         super(MyFrame, self).__init__(*args, **kw)
@@ -119,7 +145,7 @@ class MyFrame(wx.Frame):
         self.Bind(wx.EVT_BUTTON, self.on_load_files, self.btn_load_files)
         choices = [str(i) for i in range(1, 11)]
         self.chk_to_second_align = wx.CheckBox(self.panel, label="Secondary alignment")
-        self.chk_to_second_align.SetValue(False)
+        self.chk_to_second_align.SetValue(True)
         label1 = wx.StaticText(self.panel, label="Select number of X splits for secondary alignment")
         self.choice_x_splits = wx.Choice(self.panel, choices=choices)
         self.choice_x_splits.SetStringSelection("3")
@@ -128,8 +154,6 @@ class MyFrame(wx.Frame):
         self.choice_y_splits.SetStringSelection("3")
         label3 = wx.StaticText(self.panel, label="Select folder to store results")
         self.results_path_picker = wx.DirPickerCtrl(self.panel, style=wx.DIRP_USE_TEXTCTRL)
-        self.progress_bar = wx.Gauge(self.panel, range=10)
-        self.process_progress_bar = wx.Gauge(self.panel, range=10)
 
         self.btn_process = wx.Button(self.panel, label="Process")
         self.Bind(wx.EVT_BUTTON, self.on_process, self.btn_process)
@@ -148,7 +172,6 @@ class MyFrame(wx.Frame):
         controls_sizer.Add(self.chk_to_align, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.chk_non_linear, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.btn_load_files, 0, wx.EXPAND | wx.ALL, 5)
-        controls_sizer.Add(self.progress_bar, 0, wx.EXPAND | wx.ALL, 5)
 
         controls_sizer.Add(self.chk_to_second_align, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(label1, 0, wx.ALL, 5)
@@ -158,7 +181,6 @@ class MyFrame(wx.Frame):
         controls_sizer.Add(label3, 0, wx.ALL, 5)
         controls_sizer.Add(self.results_path_picker, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.btn_process, 0, wx.EXPAND | wx.ALL, 5)
-        controls_sizer.Add(self.process_progress_bar, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.btn_start_again, 0, wx.EXPAND | wx.ALL, 5)
 
         hbox.Add(controls_sizer, 1, wx.EXPAND | wx.ALL, 5)
@@ -203,7 +225,7 @@ class MyFrame(wx.Frame):
         self.SetMenuBar(menubar)
         # Set the frame properties
         self.SetSize((800, 300))
-        self.SetTitle("wxPython Example")
+        self.SetTitle("CelestialSurveyor")
         self.Centre()
         self.Maximize(True)
 
@@ -216,13 +238,11 @@ class MyFrame(wx.Frame):
         self.to_debayer.Enable(False)
         self.chk_non_linear.Enable(False)
         self.btn_load_files.Enable(False)
-        self.chk_to_second_align.Enable(False)
+        self.chk_to_second_align.Enable(True)
         self.choice_x_splits.Enable(False)
         self.choice_y_splits.Enable(False)
         self.results_path_picker.Enable(False)
         self.btn_process.Enable(False)
-        self.progress_bar.SetValue(0)
-        self.process_progress_bar.SetValue(0)
         self.checkbox_list.SetObjects([])
         self.checkbox_list.Refresh()
         self.results_path_picker.SetPath('')
@@ -268,8 +288,6 @@ class MyFrame(wx.Frame):
                 self.checkbox_list.SetCheckState(obj, True)
             self.checkbox_list.RefreshObjects(objects)
         dialog.Destroy()
-        self.progress_bar.SetValue(0)
-        self.process_progress_bar.SetValue(0)
         logger.log.debug(f"Added the following files: {paths}")
         if paths:
             self.btn_load_files.Enable(True)
@@ -278,8 +296,10 @@ class MyFrame(wx.Frame):
             self.chk_non_linear.Enable(True)
 
     def on_load_files(self, event):
+        self.progress_frame = ProgressFrame(self, "Loading progress")
+        self.progress_frame.progress.SetValue(0)
 
-        self.progress_bar.SetValue(0)
+        # self.progress_bar.SetValue(0)
         new_timestamped_file_list = []
         objects = self.checkbox_list.GetObjects()
         for file_list_obj, obj in zip(self.source_data.timestamped_file_list, objects):
@@ -315,13 +335,19 @@ class MyFrame(wx.Frame):
         self.source_data.dark_flat_folder = dark_flat_path
         self.source_data.to_debayer = self.to_debayer.GetValue()
         self.source_data.non_linear = self.chk_non_linear.GetValue()
+        self.stop_event = Event()
         self.process_thread = threading.Thread(target=self.source_data.load_images, kwargs={
-            "progress_bar": ProgressBarFactory.create_progress_bar(self.progress_bar),
-            "frame": self,
+            "progress_bar": ProgressBarFactory.create_progress_bar(self.progress_frame.progress),
+            "ui_frame": self,
+            "event": self.stop_event
         })
         self.process_thread.start()
+        # self.process_thread.
+        self.progress_frame.Show()
+        # self.process_thread.
 
     def on_load_finished(self):
+        self.progress_frame.Close()
         short_file_paths = self._gen_short_file_names([item[0] for item in self.source_data.timestamped_file_list])
         self.checkbox_list.SetObjects([
             MyDataObject(
@@ -363,7 +389,8 @@ class MyFrame(wx.Frame):
             self.draw_panel.Refresh()
 
     def on_process(self, event):
-        self.process_progress_bar.SetValue(0)
+        self.progress_frame = ProgressFrame(self, "Finding moving objects")
+        self.progress_frame.progress.SetValue(0)
         output_folder = self.results_path_picker.GetPath()
         objects = self.checkbox_list.GetObjects()
         use_img_mask = []
@@ -376,7 +403,8 @@ class MyFrame(wx.Frame):
 
         y_splits = int(self.choice_y_splits.GetString(self.choice_y_splits.GetCurrentSelection()))
         x_splits = int(self.choice_x_splits.GetString(self.choice_x_splits.GetCurrentSelection()))
-
+        self.stop_event = Event()
+        self.progress_frame.Show()
         self.process_thread = threading.Thread(target=find_asteroids, kwargs={
             "source_data": self.source_data,
             "use_img_mask": use_img_mask,
@@ -384,10 +412,15 @@ class MyFrame(wx.Frame):
             "y_splits": y_splits,
             "x_splits": x_splits,
             "secondary_alignment": self.chk_to_second_align.GetValue(),
-            "progress_bar": ProgressBarFactory.create_progress_bar(self.process_progress_bar),
-
+            "progress_bar": ProgressBarFactory.create_progress_bar(self.progress_frame.progress),
+            "event": self.stop_event,
+            "ui_frame": self
         })
         self.process_thread.start()
+
+    def on_process_finished(self):
+        self.progress_frame.Close()
+
 
     def on_start_again(self, event):
         self.source_data = None
@@ -396,7 +429,7 @@ class MyFrame(wx.Frame):
 
 def start_ui():
     app = wx.App(False)
-    frame = MyFrame(None, wx.ID_ANY, "wxPython Window", style=wx.DEFAULT_FRAME_STYLE)
+    frame = MyFrame(None, wx.ID_ANY, "CelestialSurveyor", style=wx.DEFAULT_FRAME_STYLE)
     frame.Show()
     app.MainLoop()
 

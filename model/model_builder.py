@@ -17,23 +17,24 @@ def conv3d_bn(x, filters, kernel_size, strides=(1, 1, 1), padding='same'):
 
 def SlowFast(input_shape=(None, 64, 64, 1), num_fusions=3):
     # Slow pathway
-    input = Input(shape=input_shape)
-    slow = conv3d_bn(input, 64, (5, 3, 3), strides=(1, 2, 2), padding='same')
+    input_s = Input(shape=input_shape)
+    slow = conv3d_bn(input_s, 64, (1, 5, 5), strides=(1, 2, 2), padding='same')
     slow = MaxPooling3D(pool_size=(1, 3, 3), strides=(1, 2, 2), padding='same')(slow)
-    slow = conv3d_bn(slow, 64, (3, 1, 1), padding='same')
+    slow = conv3d_bn(slow, 64, (1, 3, 3))
 
     # Fast pathway
-    # input_f = Input(shape=input_shape)
-    fast = conv3d_bn(input, 8, (1, 7, 7), strides=(1, 2, 2), padding='same')
+    input_f = Input(shape=input_shape)
+    fast = conv3d_bn(input_f, 8, (5, 3, 3), strides=(1, 2, 2), padding='same')
     fast = MaxPooling3D(pool_size=(1, 3, 3), strides=(1, 2, 2), padding='same')(fast)
-    fast = conv3d_bn(fast, 32, (1, 3, 3), padding='same')
+    fast = conv3d_bn(fast, 32, (3, 1, 1))
 
     # Multiple Fusions
     for _ in range(num_fusions):
+        new_fast = conv3d_bn(fast, 64, (1, 1, 1), strides=(4, 1, 1), padding='same') # Adjust number of frames for fusion
+        slow = Concatenate()([slow, new_fast])
+        fast = conv3d_bn(fast, 64, (5, 3, 3))
+        slow = conv3d_bn(slow, 128, (1, 5, 5))
 
-        slow = Concatenate()([slow, fast])
-        fast = conv3d_bn(fast, 64, (1, 3, 3), padding='same')  # Adjust channels for fusion
-        slow = conv3d_bn(slow, 128, (3, 1, 1), padding='same')
 
     # Continue Slow Path
     slow = GlobalAveragePooling3D()(slow)
@@ -44,7 +45,7 @@ def SlowFast(input_shape=(None, 64, 64, 1), num_fusions=3):
     output = Dense(32, activation='relu')(output)
     output = Dense(1, activation='sigmoid')(output)
 
-    model = Model(inputs=input, outputs=output)
+    model = Model(inputs=[input_f, input_s], outputs=output)
     return model
 
 

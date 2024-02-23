@@ -5,7 +5,7 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('TkAgg')
+matplotlib.use('Agg')
 from matplotlib.patches import Rectangle
 import cv2
 
@@ -19,6 +19,7 @@ from .source_data import SourceData, stretch_image
 from .progress_bar import AbstractProgressBar
 
 from logger.logger import get_logger
+from threading import Event
 
 
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
@@ -28,7 +29,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 logger = get_logger()
 
 
-def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits, x_splits, secondary_alignment: bool, progress_bar: Optional[AbstractProgressBar] = None, model_path="default"):
+def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits, x_splits, secondary_alignment: bool, progress_bar: Optional[AbstractProgressBar] = None, model_path="default", event: Optional[Event] = None, ui_frame: Optional[wx.Frame] = None):
     if use_img_mask is None:
         use_img_mask = [True for _ in range(len(source_data.images))]
 
@@ -73,8 +74,11 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
             imgs_batch = []
             ts_pred = []
             for y, x in coord_batch:
+                if isinstance(event, Event) and event.is_set():
+                    logger.log.info("Stopping processing")
+                    return
                 shrinked = source_data.get_shrinked_img_series(imgs, 64, y, x, use_img_mask)
-                shrinked = source_data.prepare_images(shrinked)
+                shrinked = source_data.prepare_images(shrinked, source_data.non_linear)
                 timestamps = source_data.timestamps
                 new_timestamps = []
                 for ts, checked in zip(timestamps, use_img_mask):
@@ -86,13 +90,18 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                 timestamps = np.swapaxes(timestamps, 0, 1)
                 imgs_batch.append(shrinked)
                 ts_pred.append(timestamps)
-            imgs_batch = np.array(imgs_batch)
-            results = model.predict(imgs_batch, verbose=0)
+            fast_batch = np.array(imgs_batch)
+            slow_batch = fast_batch[:, ::4]
+
+            results = model.predict([fast_batch, slow_batch], verbose=0)
             for res, (y, x) in zip(results, coord_batch):
                 if res > 0.9:
                     objects_coords.append((y + y_offset, x + x_offset, res))
             if progress_bar:
-                progress_bar.update()
+                try:
+                    progress_bar.update()
+                except:
+                    pass
     progress_bar.complete()
 
     ########
@@ -158,6 +167,8 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
 
     plt.savefig(os.path.join(output_folder, f"results.png"))
     logger.log.info(f"Calculations are finished. Check results folder: {output_folder}")
+    if ui_frame:
+        wx.CallAfter(ui_frame.on_process_finished)
 
 
 # Decrypt the model weights

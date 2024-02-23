@@ -28,9 +28,9 @@ class TrainingDataset:
             item.load_images(
                 progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()))
             item.load_exclusion_boxes()
-            if not item.non_linear:
-                for num in range(len(item.images)):
-                    item.images[num] = stretch_image(item.images[num])
+            # if not item.non_linear:
+            #     for num in range(len(item.images)):
+            #         item.images[num] = stretch_image(item.images[num])
 
     @classmethod
     def _load_star_samples(cls):
@@ -324,7 +324,7 @@ class TrainingDataset:
         if random.randint(0, 100) >= 100:
             imgs = self.draw_hot_pixels(imgs, bool(random.randrange(0, 2)))
 
-        imgs = SourceData.prepare_images(imgs)
+        imgs = SourceData.prepare_images(imgs, non_linear=source_data.non_linear)
 
         imgs, timestamps = source_data.adjust_series_to_min_len(imgs, timestamps, min_len=8)
 
@@ -354,7 +354,7 @@ class TrainingDataset:
         # return [X_batch, TS_batch, X_batch[:, ::10], TS_batch[:, ::10]], y_batch
         # return [X_batch, TS_batch], y_batch
         # return [X_batch, X_batch[:, ::4], TS_batch], y_batch
-        return X_batch, y_batch
+        return [X_batch, X_batch[:, ::4]], y_batch
 
     def batch_generator(self, batch_size):
         bla = True
