@@ -354,7 +354,8 @@ class TrainingDataset:
         # return [X_batch, TS_batch, X_batch[:, ::10], TS_batch[:, ::10]], y_batch
         # return [X_batch, TS_batch], y_batch
         # return [X_batch, X_batch[:, ::4], TS_batch], y_batch
-        return [X_batch, X_batch[:, ::4]], y_batch
+        # return [X_batch, X_batch[:, ::4]], y_batch
+        return X_batch, y_batch
 
     def batch_generator(self, batch_size):
         bla = True

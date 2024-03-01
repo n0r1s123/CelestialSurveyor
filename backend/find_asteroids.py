@@ -91,9 +91,10 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                 imgs_batch.append(shrinked)
                 ts_pred.append(timestamps)
             fast_batch = np.array(imgs_batch)
-            slow_batch = fast_batch[:, ::4]
+            # slow_batch = fast_batch[:, ::4]
 
-            results = model.predict([fast_batch, slow_batch], verbose=0)
+            # results = model.predict([fast_batch, slow_batch], verbose=0)
+            results = model.predict(fast_batch, verbose=0)
             for res, (y, x) in zip(results, coord_batch):
                 if res > 0.9:
                     objects_coords.append((y + y_offset, x + x_offset, res))

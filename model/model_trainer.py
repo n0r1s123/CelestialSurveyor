@@ -22,19 +22,19 @@ folder_properties = namedtuple(
 def main():
     logger.log.info(tf.__version__)
     input_shape = (None, 64, 64, 1)
-    load_model_name = "model112"
-    save_model_name = "model113"
+    load_model_name = "model115"
+    save_model_name = "model120"
 
     # Build the model
 
     # Compile the model
-    # model = build_model()
-    # model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model = build_model()
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
     # Load model
-    model = tf.keras.models.load_model(
-        f'{load_model_name}.h5'
-    )
+    # model = tf.keras.models.load_model(
+    #     f'{load_model_name}.h5'
+    # )
 
     # folders = [
     #     # folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped\\', non_linear=True, to_align=False, num_from_session=None),
