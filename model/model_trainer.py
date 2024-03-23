@@ -9,8 +9,9 @@ from logger.logger import Logger
 logger = Logger()
 
 
-os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+# os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 
 folder_properties = namedtuple(
@@ -22,8 +23,8 @@ folder_properties = namedtuple(
 def main():
     logger.log.info(tf.__version__)
     input_shape = (None, 64, 64, 1)
-    load_model_name = "model112"
-    save_model_name = "model113"
+    load_model_name = "model113"
+    save_model_name = "model114"
 
     # Build the model
 
@@ -82,46 +83,46 @@ def main():
         #                   num_from_session=50, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\SeaHorse\\Dark'),
 
 
-        folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\NGC1333_RASA\\cropped', non_linear=True, to_align=False,
                           num_from_session=None, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Seahorse\\cropped', non_linear=True, to_align=False,
                           num_from_session=None, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Orion\\Part1\\cropped', non_linear=True, to_align=False,
                           num_from_session=None, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Orion\Part2\\cropped', non_linear=True, to_align=False,
                           num_from_session=None, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Orion\Part3\\cropped', non_linear=True, to_align=False,
                           num_from_session=None, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Orion\\Part4\\cropped1', non_linear=True, to_align=False,
                           num_from_session=None, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\NGC_1333_RASA\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\NGC1333_RASA\\cropped', non_linear=True, to_align=False,
                           num_from_session=5, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\SeaHorse\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Seahorse\\cropped', non_linear=True, to_align=False,
                           num_from_session=5, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_one\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Orion\\Part1\\cropped', non_linear=True, to_align=False,
                           num_from_session=3, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_two\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Orion\Part2\\cropped', non_linear=True, to_align=False,
                           num_from_session=6, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_three\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Orion\Part3\\cropped', non_linear=True, to_align=False,
                           num_from_session=7, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Orion\\Part_four\\cropped1', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\Orion\\Part4\\cropped1', non_linear=True, to_align=False,
                           num_from_session=4, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\M78\\registered\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB', non_linear=False, to_align=False,
+        folder_properties('D:\\git\\dataset\\M78\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB', non_linear=False, to_align=False,
                           num_from_session=None, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\M81\\cropped', non_linear=True, to_align=False,
+        folder_properties('D:\\git\\dataset\\M81\\cropped', non_linear=True, to_align=False,
                           num_from_session=15, debayer=False),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Virgo', non_linear=False, to_align=True,
-                          num_from_session=None, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\Rosette\\Dark',
-                          flats="C:\\Users\\bsolomin\\Astro\\Rosette\\Flat",
-                          dark_flats="C:\\Users\\bsolomin\\Astro\\Rosette\\DarkFlat"),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Virgo1', non_linear=False, to_align=True,
-                          num_from_session=None, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\Rosette\\Dark',
-                          flats="C:\\Users\\bsolomin\\Astro\\Rosette\\Flat",
-                          dark_flats="C:\\Users\\bsolomin\\Astro\\Rosette\\DarkFlat"),
-        folder_properties('C:\\Users\\bsolomin\\Astro\\Virgo2', non_linear=False, to_align=True,
-                          num_from_session=None, debayer=True, darks='C:\\Users\\bsolomin\\Astro\\Rosette\\Dark',
-                          flats="C:\\Users\\bsolomin\\Astro\\Rosette\\Flat",
-                          dark_flats="C:\\Users\\bsolomin\\Astro\\Rosette\\DarkFlat"),
+        folder_properties('D:\\git\\dataset\Virgo', non_linear=False, to_align=True,
+                          num_from_session=None, debayer=True, darks='D:\\git\\dataset\\Virgo\\Dark',
+                          flats="D:\\git\\dataset\\Virgo\\Flat",
+                          dark_flats="D:\\git\\dataset\\Virgo\\DarkFlat"),
+        folder_properties('D:\\git\\dataset\Virgo1', non_linear=False, to_align=True,
+                          num_from_session=None, debayer=True, darks='D:\\git\\dataset\\Virgo\\Dark',
+                          flats="D:\\git\\dataset\\Virgo\\Flat",
+                          dark_flats="D:\\git\\dataset\\Virgo\\DarkFlat"),
+        folder_properties('D:\\git\\dataset\Virgo2', non_linear=False, to_align=True,
+                          num_from_session=None, debayer=True, darks='D:\\git\\dataset\\Virgo\\Dark',
+                          flats="D:\\git\\dataset\\Virgo\\Flat",
+                          dark_flats="D:\\git\\dataset\\Virgo\\DarkFlat"),
     ]
 
 

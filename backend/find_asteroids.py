@@ -1,3 +1,4 @@
+import datetime
 import os
 import numpy as np
 import wx
@@ -150,7 +151,7 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
             new_frames = np.zeros(new_shape)
             new_frames[:, :-20, :] = frames
             used_timestamps = []
-            for is_used, (_, ts, _) in zip(use_img_mask, source_data.timestamped_file_list):
+            for is_used, (_, ts, *_) in zip(use_img_mask, source_data.timestamped_file_list):
                 if is_used:
                     used_timestamps.append(ts)
 
@@ -166,6 +167,39 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                 loop=0)
 
     plt.savefig(os.path.join(output_folder, f"results.png"))
+
+    start_session_frame_nums = [0]
+    start_ts = source_data.timestamps[0]
+    for num, item in enumerate(source_data.timestamps[1:]):
+        if item - start_ts > datetime.timedelta(hours=15):
+            start_session_frame_nums.append(num)
+            start_ts = item
+    for start_frame_num in start_session_frame_nums:
+        for obj_type in source_data.request_visible_targets(start_frame_num):
+            for item in obj_type:
+                target_x, target_y = item.pixel_coordinates
+                target_x = round(float(target_x))
+                target_y = round(float(target_y))
+                x = (target_x, target_x)
+                if target_y < 50:
+                    y = (target_y + 4, target_y + 14)
+                else:
+                    y = (target_y - 4, target_y - 14)
+                plt.plot(x, y, color="orange", linewidth=2)
+
+                if target_y < 50:
+                    text_y = target_y + 20 + 20
+                else:
+                    text_y = target_y - 20
+
+                if target_x > source_data.img_shape[1] - 300:
+                    text_x = target_x - 300
+                else:
+                    text_x = target_x
+                plt.text(text_x, text_y, f"{item.name}: {item.magnitude}", color="orange", fontsize=20)
+
+    plt.axis('off')
+    plt.savefig(os.path.join(output_folder, f"results_annotated.png"))
     logger.log.info(f"Calculations are finished. Check results folder: {output_folder}")
     if ui_frame:
         wx.CallAfter(ui_frame.on_process_finished)

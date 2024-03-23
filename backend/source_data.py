@@ -1,28 +1,29 @@
 import copy
 import sys
 
-import json
 import traceback
 import datetime
 import os
 import re
 import wx
 from typing import Optional
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+import twirl
+from collections import namedtuple
+import json
+from .known_object import KnownObject
+import requests
 
 import astropy.io.fits
-import time
 
 import numpy as np
-import tqdm
-import decimal
-from PIL import Image
 
 from auto_stretch.stretch import Stretch
 from xisf import XISF
 from bs4 import BeautifulSoup
-from multiprocessing import Process, Queue, current_process
+from multiprocessing import Process, Queue
 from queue import Empty
-# from multiprocessing.shared_memory import SharedMemory
 import astroalign as aa
 from logger.logger import get_logger, arg_logger
 import cv2
@@ -130,8 +131,29 @@ def __get_datetime_from_str(timestamp):
 def load_fits(file_path, load_image=True, to_debayer=False):
     with astropy.io.fits.open(file_path) as hdul:
         header = hdul[0].header
+        print(header)
         exposure = float(header['EXPTIME'])
         timestamp = __get_datetime_from_str(header['DATE-OBS'])
+        ra = float(header['RA'])
+        dec = float(header['DEC'])
+        pixel_scale = header.get('SCALE')
+        if pixel_scale is not None:
+            pixel_scale = float(pixel_scale)
+        else:
+            focal_len = header.get('FOCALLEN')
+            pixel_size = header.get('XPIXSZ')
+            if focal_len is not None and pixel_size is not None:
+                focal_len = float(focal_len)
+                pixel_size = float(pixel_size)
+                pixel_scale = (pixel_size / focal_len) * 206.265
+            else:
+                raise NotImplementedError("Pixel scale information is not present fits header")
+
+        plate_solve_data = SolveData(ra, dec, pixel_scale)
+        lat = float(header["SITELAT"])
+        long = float(header["SITELONG"])
+        site_location = SiteLocation(lat=lat, long=long)
+
         if load_image:
             img_data = np.array(hdul[0].data)
             if len(img_data.shape) == 2:
@@ -144,7 +166,7 @@ def load_fits(file_path, load_image=True, to_debayer=False):
             img_data /= 256 * 256 - 1
         else:
             img_data = None
-    return img_data, timestamp, exposure
+    return img_data, timestamp, exposure, plate_solve_data, site_location
 
 
 def load_xisf(file_path, load_image=True, to_debayer=False):
@@ -152,35 +174,39 @@ def load_xisf(file_path, load_image=True, to_debayer=False):
     xisf = XISF(file_path)
     img_meta = xisf.get_images_metadata()[0]
     timestamp = __get_datetime_from_str(img_meta["FITSKeywords"]["DATE-OBS"][0]['value'])
+    print(img_meta["FITSKeywords"])
     exposure = float(img_meta["FITSKeywords"]["EXPTIME"][0]['value'])
+    ra = float(img_meta["FITSKeywords"]["RA"][0]['value'])
+    dec = float(img_meta["FITSKeywords"]["DEC"][0]['value'])
+    pixel_scale = float(img_meta["FITSKeywords"]["SCALE"][0]['value'])
+    plate_solve_data = SolveData(ra, dec, pixel_scale)
+    lat = float(img_meta["FITSKeywords"]["SITELAT"][0]['value'])
+    long = float(img_meta["FITSKeywords"]["SITELONG"][0]['value'])
+    site_location = SiteLocation(lat=lat, long=long)
+
     if load_image:
         img_data = xisf.read_image(0)
         img_data = np.array(img_data)
 
     else:
         img_data = None
-    return img_data, timestamp, exposure
+    return img_data, timestamp, exposure, plate_solve_data, site_location
 
 
 def load_worker(load_fps, num_list, load_func, non_linear, progress_queue: Queue, error_queue: Queue,
                 reference_image, to_align, to_skip_bad, to_debayer, master_dark, master_flat):
     reference_image = reference_image * reference_image
-    # reference_image[reference_image < 0] = 0
     try:
         for num, fp in zip(num_list, load_fps):
             if not error_queue.empty():
                 return
             rejected = False
-            img_data, _, _ = load_func(fp, load_image=True, to_debayer=to_debayer)
+            img_data, *_ = load_func(fp, load_image=True, to_debayer=to_debayer)
             if master_dark is not None:
                 img_data -= master_dark
             if master_flat is not None:
                 img_data /= master_flat
             img_data = process_img_data(img_data, non_linear)
-            # if not non_linear:
-            #     img_data = stretch_image(img_data)
-            # if to_align:
-            #     img_data += ALIGNMENT_OFFSET
             if to_align:
                 try:
                     img_data, _ = aa.register(img_data, reference_image, 0, max_control_points=50, min_area=5)
@@ -194,8 +220,6 @@ def load_worker(load_fps, num_list, load_func, non_linear, progress_queue: Queue
 
                 y_boarders, x_boarders = SourceData.crop_fine(
                     img_data, y_pre_crop_boarders=y_boarders, x_pre_crop_boarders=x_boarders, to_do=False)
-                # if to_align:
-                #     img_data -= ALIGNMENT_OFFSET
                 progress_queue.put((num, rejected, img_data, np.array(y_boarders, dtype="uint16"), np.array(x_boarders, dtype="uint16")))
             else:
                 progress_queue.put((num, rejected, None, np.array((0, 0), dtype="uint16"), np.array((0, 0), dtype="uint16")))
@@ -208,6 +232,17 @@ def load_worker(load_fps, num_list, load_func, non_linear, progress_queue: Queue
 
 def get_file_paths(folder):
     return [os.path.join(folder, item) for item in os.listdir(folder) if item.lower().endswith(".xisf") or item.lower().endswith(".fit") or item.lower().endswith(".fits")]
+
+
+SolveData = namedtuple(
+    "solve_data",
+    ("ra", "dec", "pixel_scale")
+)
+
+SiteLocation = namedtuple(
+    "site_location",
+    ("lat", "long")
+)
 
 
 class SourceData:
@@ -235,14 +270,7 @@ class SourceData:
         self.flat_folder = flat_folder
         self.dark_flat_folder = dark_flat_folder
         self.load_processes = []
-
-    # def __del__(self):
-    #     if isinstance(self.imgs_shm, SharedMemory):
-    #         self.imgs_shm.unlink()
-    #     if isinstance(self.y_boarders_shm, SharedMemory):
-    #         self.y_boarders_shm.unlink()
-    #     if isinstance(self.x_boarders_shm, SharedMemory):
-    #         self.x_boarders_shm.unlink()
+        self.wcs = None
 
     @property
     def timestamps(self):
@@ -362,13 +390,16 @@ class SourceData:
             else:
                 raise ValueError("xisf or fit/fits files are allowed")
 
-            _, timestamp, exposure = load_func(fp, load_image=False)
-            timestamped_file_list.append((fp, timestamp, exposure))
+            _, timestamp, exposure, plate_solve_data, site_location = load_func(fp, load_image=False)
+            timestamped_file_list.append((fp, timestamp, exposure, plate_solve_data, site_location))
         timestamped_file_list.sort(key=lambda x: x[1])
 
         exposures = [item[2] for item in timestamped_file_list]
         timestamps = [item[1] for item in timestamped_file_list]
         file_paths = [item[0] for item in timestamped_file_list]
+        solve_datas = [item[3] for item in timestamped_file_list]
+        site_locations = [item[4] for item in timestamped_file_list]
+
         if self.num_from_session is not None:
             new_file_paths = []
             new_timestamps = []
@@ -386,7 +417,7 @@ class SourceData:
             file_paths = new_file_paths
             timestamps = new_timestamps
             exposures = new_exposures
-        self.timestamped_file_list = list(zip(file_paths, timestamps, exposures))
+        self.timestamped_file_list = list(zip(file_paths, timestamps, exposures, solve_datas, site_locations))
 
     @arg_logger
     def load_images(self, progress_bar: Optional[AbstractProgressBar] = None, ui_frame: Optional[wx.Frame] = None, event: Optional[Event] = None):
@@ -400,7 +431,7 @@ class SourceData:
             load_func = load_fits
         else:
             raise ValueError("xisf or fit/fits files are allowed")
-        template_img, _, _ = load_func(file_paths[0], True, to_debayer=to_debayer)
+        template_img, *_ = load_func(file_paths[0], True, to_debayer=to_debayer)
         logger.log.debug(f"Initial image shape: {template_img.shape}")
         mem_size = 1
         for n in (len(file_paths), *template_img.shape):
@@ -425,8 +456,6 @@ class SourceData:
         if master_flat is not None:
             template_img /= master_flat
         template_img = process_img_data(template_img, non_linear)
-        # if not non_linear:
-        #     template_img = stretch_image(template_img)
         worker_num = min((os.cpu_count(), 4))
         self.load_processes = []
         progress_queue = Queue()
@@ -505,6 +534,9 @@ class SourceData:
         imgs = imgs[:, y_top: y_bottom, x_left: x_right]
         self.images = imgs
         self.img_shape = self.images[0].shape
+        plate_solve_datas = [item[3] for item in self.timestamped_file_list]
+        self.wcs = self.plate_solve(self.images[0], plate_solve_date=plate_solve_datas[0])
+        # self.request_visible_targets(0)
         if ui_frame:
             wx.CallAfter(ui_frame.on_load_finished)
 
@@ -597,22 +629,14 @@ class SourceData:
                     reference = np.copy(not_aligned[0])
 
                     aligned[0] = reference[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
-                    # if not self.non_linear:
-                    #     aligned[0] = stretch_image(aligned[0])
-                    # aligned[0] = reference[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                     bad = []
                     for num in range(1, len(not_aligned)):
                         try:
-                            # image_to_align = stretch_image(not_aligned[num])
                             image_to_align = not_aligned[num]
-                            # new_img, _ = aa.register(not_aligned[num], reference, fill_value=0, max_control_points=50, min_area=3)
                             transform, *_ = aa.find_transform(not_aligned[num], reference, max_control_points=50, min_area=3)
                             new_img, _ = aa.apply_transform(transform, image_to_align, reference, fill_value=0)
                             new_img = new_img[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
-                            # if not self.non_linear:
-                            #     new_img = stretch_image(new_img)
                             aligned[num] = new_img
-                            # aligned[num] = new_img[self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                         except:
                             if to_skip_bad:
                                 logger.log.info(f"Frame {num} in split {y_num} {x_num} was not aligned")
@@ -621,23 +645,8 @@ class SourceData:
                             else:
                                 raise Exception(
                                     "Unable to make star alignment. Try to delete bad images or use --skip_bad key")
-                    # aligned = aligned[:, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
                 else:
                     aligned = not_aligned[:, self.BOARDER_OFFSET: -self.BOARDER_OFFSET, self.BOARDER_OFFSET: -self.BOARDER_OFFSET]
-                    # if not self.non_linear:
-                    #     for num in range(len(aligned)):
-                    #         aligned[num] = stretch_image(aligned[num])
-
-                # if output_folder:
-                #     frames = np.copy(aligned)
-                #     frames = frames * 255
-                #     new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in frames]
-                #     new_frames[0].save(
-                #         os.path.join(output_folder, f"{y_offset}_{x_offset}.gif"),
-                #         save_all=True,
-                #         append_images=new_frames[1:],
-                #         duration=200,
-                #         loop=0)
 
                 yield aligned, y_offset, x_offset, new_use_img_mask
 
@@ -687,3 +696,111 @@ class SourceData:
         new_timestamps = [item[1] for item in timestamped_images]
         new_imgs = np.array(new_imgs)
         return new_imgs, new_timestamps
+
+    def plate_solve(self, img_data, plate_solve_date: SolveData):
+        from twirl.geometry import sparsify
+        logger.log.info("Plate solving")
+        center = SkyCoord(plate_solve_date.ra, plate_solve_date.dec, unit=["deg", "deg"])
+        print(plate_solve_date)
+
+        # and the size of its field of view
+        pixel = plate_solve_date.pixel_scale * u.arcsec  # known pixel scale
+        shape = img_data.shape
+        fov = np.min(shape) * pixel.to(u.deg)
+        sky_coords = twirl.gaia_radecs(center, fov)[0:200]
+        sky_coords = sparsify(sky_coords, 0.1)
+        sky_coords = sky_coords[:25]
+        # detect stars in the image
+        tmp_pixel_coords = twirl.find_peaks(img_data)[0:200]
+        pixel_coords = []
+        for x, y in tmp_pixel_coords:
+            dist_from_center_x = x - img_data.shape[1] // 2
+            dist_from_center_y = y - img_data.shape[0] // 2
+            if np.sqrt(dist_from_center_x**2 + dist_from_center_y**2) < min(img_data.shape) // 2:
+                pixel_coords.append([x, y])
+        pixel_coords = np.array(pixel_coords[:25])
+        print(sky_coords)
+
+        print("_" * 60)
+        print(pixel_coords)
+        print("_" * 60)
+
+        # compute the World Coordinate System
+        wcs = twirl.compute_wcs(pixel_coords, sky_coords, asterism=4)
+        # print(wcs.pixel_to_world(0, 0).ra.hms)
+        # print(wcs.pixel_to_world(0, 0).ra.hms.h)
+        # print(wcs.pixel_to_world(0, 0).ra.hms.m)
+        # print(wcs.pixel_to_world(0, 0).ra.hms.s)
+        # print(wcs.pixel_to_world(0, 0).dec.dms)
+        # print(wcs.pixel_to_world(0, 0).ra.hms < wcs.pixel_to_world(100, 100).ra.hms)
+        # print(wcs.pixel_to_world(0, 0).ra.hms > wcs.pixel_to_world(100, 100).ra.hms)
+        # coords = SkyCoord(wcs.pixel_to_world(0, 0)[0], wcs.pixel_to_world(0, 0)[1], frame='icrs', unit='deg')
+        # print(wcs.pixel_to_world(0, 0).to_string('hmsdms'))
+        print(wcs)
+        return wcs
+
+    @staticmethod
+    def convert_ra(ra):
+        minus_substr = "M" if int(ra.h) < 0 else ""
+        hour = f"{minus_substr}{abs(int(ra.h)):02d}"
+        return f"{hour}-{abs(int(ra.m)):02d}-{abs(int(ra.s)):02d}"
+    @staticmethod
+    def convert_dec(dec):
+        minus_substr = "M" if int(dec.d) < 0 else ""
+        hour = f"{minus_substr}{abs(int(dec.d)):02d}"
+        return f"{hour}-{abs(int(dec.m)):02d}-{abs(int(dec.s)):02d}"
+
+    def request_visible_targets(self, img_num):
+        logger.log.debug("Requesting visible targets")
+        obs_time = self.timestamped_file_list[img_num][1]
+        obs_time = f"{obs_time.year:04d}-{obs_time.month:02d}-{obs_time.day:02d}_{obs_time.hour:02d}:{obs_time.minute:02d}:{obs_time.second:02d}"
+        corner_points = [self.wcs.pixel_to_world(x, y) for x, y in ((0, 0), (0, self.img_shape[0]), (self.img_shape[1], 0), (self.img_shape[1], self.img_shape[0]))]
+        ra_max = max([item.ra.hms for item in corner_points])
+        ra_min = min([item.ra.hms for item in corner_points])
+        dec_max = max([item.dec.dms for item in corner_points])
+        dec_min = min([item.dec.dms for item in corner_points])
+
+        fov_ra_lim = f"{self.convert_ra(ra_min)},{self.convert_ra(ra_max)}"
+        fov_dec_lim = f"{self.convert_dec(dec_min)},{self.convert_dec(dec_max)}"
+
+        know_asteroids = []
+        know_comets = []
+
+        # TODO: magnitude handling
+        magnitude_limit = 20
+
+        for sb_kind in ('a', 'c'):
+            params = {
+                "sb-kind": sb_kind,
+                # "mpc-code": "568",
+                "lat": self.timestamped_file_list[img_num][4].lat,
+                "lon": self.timestamped_file_list[img_num][4].long,
+                "alt": 0,
+                "obs-time": obs_time,
+                "mag-required": True,
+                "two-pass": True,
+                "suppress-first-pass": True,
+                "req-elem": False,
+                "vmag-lim": magnitude_limit,
+                "fov-ra-lim": fov_ra_lim,
+                "fov-dec-lim": fov_dec_lim,
+
+            }
+            logger.log.debug(f"Params: {params}")
+            res = requests.get("https://ssd-api.jpl.nasa.gov/sb_ident.api", params=params)
+            res = json.loads(res.content)
+            print(json.dumps(res, indent=4))
+            potential_known_objects = [dict(zip(res["fields_second"], item)) for item in res.get("data_second_pass", [])]
+            potential_known_objects = [KnownObject(item, wcs=self.wcs) for item in potential_known_objects]
+            first_pass_objects = [dict(zip(res["fields_first"], item)) for item in res.get("data_first_pass", [])]
+            potential_known_objects.extend([KnownObject(item, wcs=self.wcs) for item in first_pass_objects])
+        for item in potential_known_objects:
+            x, y = item.pixel_coordinates
+            if 0 <= x < self.img_shape[1] and 0 <= y < self.img_shape[0]:
+                if sb_kind == 'a':
+                    know_asteroids.append(item)
+                if sb_kind == 'c':
+                    know_comets.append(item)
+
+        logger.log.info(f"There are {len(know_asteroids)} known asteroids and {len(know_comets)} in the field of view")
+        return know_asteroids, know_comets
