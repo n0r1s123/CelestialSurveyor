@@ -37,7 +37,7 @@ def datalayer(x, stride):
 def SlowFast_body(layers, block, dropout=0.5):
     inputs = Input(shape=(None, 64, 64, 1))
     inputs_fast = Lambda(datalayer, name='data_fast', arguments={'stride':1})(inputs)
-    inputs_slow = Lambda(datalayer, name='data_slow', arguments={'stride':8})(inputs)
+    inputs_slow = Lambda(datalayer, name='data_slow', arguments={'stride':4})(inputs)
     fast, lateral = Fast_body(inputs_fast, layers, block)
     slow = Slow_body(inputs_slow, lateral, layers, block)
     x = Concatenate()([slow, fast])
@@ -52,18 +52,18 @@ def SlowFast_body(layers, block, dropout=0.5):
 def Fast_body(x, layers, block):
     fast_inplanes = 8
     lateral = []
-    x = Conv_BN_ReLU(8, kernel_size=(5, 7, 7), strides=(1, 2, 2))(x)
+    x = Conv_BN_ReLU(8, kernel_size=(5, 3, 3), strides=(1, 2, 2))(x)
     x = MaxPool3D(pool_size=(1, 3, 3), strides=(1, 2, 2), padding='same')(x)
-    lateral_p1 = Conv3D(8*2, kernel_size=(5, 1, 1), strides=(8, 1, 1), padding='same', use_bias=False)(x)
+    lateral_p1 = Conv3D(8*2, kernel_size=(5, 1, 1), strides=(4, 1, 1), padding='same', use_bias=False)(x)
     lateral.append(lateral_p1)
     x, fast_inplanes = make_layer_fast(x, block, 8, layers[0], head_conv=3, fast_inplanes=fast_inplanes)
-    lateral_res2 = Conv3D(32*2, kernel_size=(5, 1, 1), strides=(8, 1, 1), padding='same', use_bias=False)(x)
+    lateral_res2 = Conv3D(32*2, kernel_size=(5, 1, 1), strides=(4, 1, 1), padding='same', use_bias=False)(x)
     lateral.append(lateral_res2)
     x, fast_inplanes = make_layer_fast(x, block, 16, layers[1], stride=2, head_conv=3, fast_inplanes=fast_inplanes)
-    lateral_res3 = Conv3D(64*2, kernel_size=(5, 1, 1), strides=(8, 1, 1), padding='same', use_bias=False)(x)
+    lateral_res3 = Conv3D(64*2, kernel_size=(5, 1, 1), strides=(4, 1, 1), padding='same', use_bias=False)(x)
     lateral.append(lateral_res3)
     x, fast_inplanes = make_layer_fast(x, block, 32, layers[2], stride=2, head_conv=3, fast_inplanes=fast_inplanes)
-    lateral_res4 = Conv3D(128*2, kernel_size=(5, 1, 1), strides=(8, 1, 1), padding='same', use_bias=False)(x)
+    lateral_res4 = Conv3D(128*2, kernel_size=(5, 1, 1), strides=(4, 1, 1), padding='same', use_bias=False)(x)
     lateral.append(lateral_res4)
     x, fast_inplanes = make_layer_fast(x, block, 64, layers[3], stride=2, head_conv=3, fast_inplanes=fast_inplanes)
     x = GlobalAveragePooling3D()(x)
@@ -71,16 +71,16 @@ def Fast_body(x, layers, block):
 
 def Slow_body(x, lateral, layers, block):
     slow_inplanes = 64 + 64//8*2
-    x = Conv_BN_ReLU(64, kernel_size=(1, 7, 7), strides=(1, 2, 2))(x)
+    x = Conv_BN_ReLU(32, kernel_size=(1, 3, 3), strides=(1, 2, 2))(x)
     x = MaxPool3D(pool_size=(1, 3, 3), strides=(1, 2, 2), padding='same')(x)
     x = Concatenate()([x, lateral[0]])
-    x, slow_inplanes = make_layer_slow(x, block, 64, layers[0], head_conv=1, slow_inplanes=slow_inplanes)
+    x, slow_inplanes = make_layer_slow(x, block, 32, layers[0], head_conv=1, slow_inplanes=slow_inplanes)
     x = Concatenate()([x, lateral[1]])
-    x, slow_inplanes = make_layer_slow(x, block, 128, layers[1], stride=2, head_conv=1, slow_inplanes=slow_inplanes)
+    x, slow_inplanes = make_layer_slow(x, block, 64, layers[1], stride=2, head_conv=1, slow_inplanes=slow_inplanes)
     x = Concatenate()([x, lateral[2]])
-    x, slow_inplanes = make_layer_slow(x, block, 256, layers[2], stride=2, head_conv=1, slow_inplanes=slow_inplanes)
+    x, slow_inplanes = make_layer_slow(x, block, 128, layers[2], stride=2, head_conv=1, slow_inplanes=slow_inplanes)
     x = Concatenate()([x, lateral[3]])
-    x, slow_inplanes = make_layer_slow(x, block, 512, layers[3], stride=2, head_conv=1, slow_inplanes=slow_inplanes)
+    x, slow_inplanes = make_layer_slow(x, block, 256, layers[3], stride=2, head_conv=1, slow_inplanes=slow_inplanes)
     x = GlobalAveragePooling3D()(x)
     return x
 
@@ -112,9 +112,6 @@ def make_layer_slow(x, block, planes, blocks, stride=1, head_conv=1, slow_inplan
     return x, slow_inplanes
 
 
-
-
-
-if __name__=="__main__":
+if __name__ == "__main__":
     model = SlowFast_body([3, 4, 6, 3], bottleneck)
     model.summary()

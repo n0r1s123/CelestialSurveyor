@@ -281,7 +281,7 @@ class MyFrame(wx.Frame):
             self.checkbox_list.SetObjects([
                 MyDataObject(
                     fp, timestamp, exposure, checked=True
-                ) for fp, (_, timestamp, exposure) in zip(short_file_paths, self.source_data.timestamped_file_list)
+                ) for fp, (_, timestamp, exposure, *_) in zip(short_file_paths, self.source_data.timestamped_file_list)
             ])
             objects = self.checkbox_list.GetObjects()
             for obj in objects:
@@ -313,7 +313,7 @@ class MyFrame(wx.Frame):
         self.checkbox_list.SetObjects([
             MyDataObject(
                 fp, timestamp, exposure, checked=True
-            ) for fp, (_, timestamp, exposure) in zip(short_file_paths, self.source_data.timestamped_file_list)
+            ) for fp, (_, timestamp, exposure, *_) in zip(short_file_paths, self.source_data.timestamped_file_list)
         ])
         objects = self.checkbox_list.GetObjects()
         for obj in objects:
@@ -352,7 +352,7 @@ class MyFrame(wx.Frame):
         self.checkbox_list.SetObjects([
             MyDataObject(
                 fp, timestamp, exposure, checked=True
-            ) for fp, (_, timestamp, exposure) in zip(short_file_paths, self.source_data.timestamped_file_list)
+            ) for fp, (_, timestamp, exposure, *_) in zip(short_file_paths, self.source_data.timestamped_file_list)
         ])
         objects = self.checkbox_list.GetObjects()
         for obj in objects:

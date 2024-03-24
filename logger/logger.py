@@ -84,7 +84,7 @@ class Logger:
             if not hasattr(cls, '_instance'):
                 cls._instance = super(Logger, cls).__new__(cls)
                 cls._instance.log = logging.getLogger('MyLogger')
-                cls._instance.log.setLevel(logging.INFO)
+                cls._instance.log.setLevel(logging.DEBUG)
 
                 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
@@ -95,7 +95,7 @@ class Logger:
 
                 # Create another handler to log messages to the console
                 console_handler = logging.StreamHandler()
-                console_handler.setLevel(logging.INFO)
+                console_handler.setLevel(logging.DEBUG)
                 console_handler.setFormatter(formatter)
                 cls._instance.log.addHandler(console_handler)
                 file_handler = LogFileHandler()

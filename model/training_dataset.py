@@ -218,13 +218,12 @@ class TrainingDataset:
             start_image_idx = random.randint(0, len(imgs) - 1)
             start_y = random.randint(0, y_shape - 1)
             start_x = random.randint(0, x_shape - 1)
-            object_factor = random.randrange(120, 301) / 300
+            noise_level = self.estimate_image_noize_level(imgs)
+            signal_space = 1 - noise_level
+            above_noise_percent = random.randrange(100, 1001) / 1000
+            expected_star_max = signal_space * above_noise_percent + noise_level
             star_max = np.amax(star_img)
-            expected_max = np.average(imgs) + (np.max(imgs) - np.average(imgs)) * object_factor
-            if star_max == 0:
-                multiplier = 1
-            else:
-                multiplier = expected_max / star_max
+            multiplier = expected_star_max / star_max
             star_img = star_img * multiplier
 
             # Calculate min and max movement vector length (pixels/hour)
@@ -271,6 +270,15 @@ class TrainingDataset:
 
     @classmethod
     def gen_timestamps(cls, num_timestamps):
+        """
+        Generates a list of timestamps for a given number of timestamps.
+
+        Args:
+            num_timestamps (int): The number of timestamps to generate.
+
+        Returns:
+            list: A list of datetime objects representing the generated timestamps.
+        """
         max_sessions_num = min((num_timestamps - 1) // 2 + 1, 4)
         sessions_num = random.randrange(0, max_sessions_num)
         exposures = (0.25, 0.5, *tuple(range(1, 11)))
@@ -303,6 +311,20 @@ class TrainingDataset:
         return timestamps
 
     def make_series(self, source_data_idx=0):
+        """
+        Generates a series of images with timestamps based on the source data.
+
+        Args:
+            source_data_idx (int, optional): The index of the source data to use. Defaults to 0.
+
+        Returns:
+            tuple: A tuple containing the generated images, normalized timestamps, difference timestamps, and the result
+                   - imgs (ndarray): The generated images as a numpy array.
+                   - normalized_timestamps (ndarray): The normalized timestamps as a numpy array.
+                   - diff_timestamps (ndarray): The difference timestamps as a numpy array.
+                   - result (ndarray): The result as a numpy array.
+
+        """
         source_data = self.source_datas[source_data_idx]
         timestamps = self.gen_timestamps(len(source_data.images))
 
@@ -333,6 +355,21 @@ class TrainingDataset:
         return result
 
     def make_batch(self, batch_size, save=False):
+        """
+        Generates a batch of data for training or testing.
+
+        Args:
+            batch_size (int): The number of series to generate in the batch.
+            save (bool, optional): Whether to save the generated images as GIFs. Defaults to False.
+
+        Returns:
+            tuple: A tuple containing the generated images, timestamps, and the result.
+                   - X_batch (ndarray): The generated images as a numpy array.
+                   - TS_batch (ndarray): The timestamps as a numpy array.
+                   - y_batch (ndarray): The result as a numpy array.
+
+        If `save` is True, the generated images will be saved as GIFs with the format "{num}_{res[0]}.gif".
+        """
         source_data_idx = random.randrange(0, len(self.source_datas))
         batch = [self.make_series(source_data_idx) for _ in range(batch_size)]
         X_batch = np.array([item[0] for item in batch])
@@ -358,7 +395,32 @@ class TrainingDataset:
         return X_batch, y_batch
 
     def batch_generator(self, batch_size):
+        """
+        Generates a batch of data for training or testing.
+
+        Args:
+            batch_size (int): The number of series to generate in the batch.
+
+        Yields:
+            tuple: A tuple containing the generated images, timestamps, and the result.
+                   - X_batch (ndarray): The generated images as a numpy array.
+                   - TS_batch (ndarray): The timestamps as a numpy array.
+                   - y_batch (ndarray): The result as a numpy array.
+        """
         bla = True
         while True:
             yield self.make_batch(batch_size, bla)
             bla = False
+
+    def estimate_image_noize_level(self, image: np.ndarray) -> np.float64:
+        """
+        Estimate the noise level of an image.
+
+        Args:
+            image (ndarray): The input image.
+
+        Returns:
+            ndarray: The estimated noise level of the image.
+        """
+        return np.std(image)
+
