@@ -45,7 +45,7 @@ def stretch_image(img_data):
     return Stretch().stretch(img_data)
 
 def debayer(img_data):
-    return np.array(cv2.cvtColor(img_data, cv2.COLOR_BayerBG2BGR), dtype=PIXEL_TYPE)
+    return np.array(cv2.cvtColor(img_data, cv2.COLOR_BayerBG2GRAY), dtype=PIXEL_TYPE)
 
 @arg_logger
 def get_master_dark( folder, to_debayer=False, darks_number_limit=10):
