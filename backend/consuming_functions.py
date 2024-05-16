@@ -263,8 +263,46 @@ def load_worker(indexes: list[int], file_list: list[str], shm_params: SharedMemo
         import traceback
         traceback.print_exc()
 
+def align_worker(img_indexes: list[int], shm_params: SharedMemoryParams, progress_queue: Queue) -> tuple[list[int], list[bool], list[np.ndarray]]:
 
+    shm = SharedMemory(name=shm_params.shm_name, create=False)
+    imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    footprints = []
+    successes = []
+    if shm_params.y_slice.start is not None and shm_params.y_slice.stop is not None:
+        target_y_slice = slice(
+            shm_params.y_slice.start - SECONDARY_ALIGNMENT_OFFSET,
+            shm_params.y_slice.stop + SECONDARY_ALIGNMENT_OFFSET)
+    else:
+        target_y_slice = shm_params.y_slice
 
+    if shm_params.x_slice.start is not None and shm_params.x_slice.stop is not None:
+        target_x_slice = slice(
+            shm_params.x_slice.start - SECONDARY_ALIGNMENT_OFFSET,
+            shm_params.x_slice.stop + SECONDARY_ALIGNMENT_OFFSET)
+    else:
+        target_x_slice = shm_params.x_slice
+    for img_idx in img_indexes:
+        try:
+            imgs[img_idx, shm_params.y_slice, shm_params.x_slice], footprint = aa.register(
+                imgs[img_idx, target_y_slice, target_x_slice],
+                imgs[0, shm_params.y_slice, shm_params.x_slice],
+                fill_value=0,
+                max_control_points=50,
+                min_area=5)
+        except Exception as e:
+            footprint = None
+            success = False
+            # TODO log error with logger and print stacktrace
+        else:
+            success = True
+        footprints.append(footprint)
+        successes.append(success)
+
+        progress_queue.put(img_idx)
+    shm.close()
+
+    return img_indexes, successes, footprints
 
 
 @measure_execution_time
