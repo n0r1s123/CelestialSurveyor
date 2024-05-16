@@ -2,11 +2,12 @@ import tqdm
 
 from abc import ABC, abstractmethod
 from wx import Gauge
+from typing import Optional
 
 
 class AbstractProgressBar(ABC):
     @abstractmethod
-    def update(self):
+    def update(self, num: int = 1):
         """
         Update the progress bar with a given progress value.
         :param progress: A float value between 0 and 1 indicating the progress.
@@ -45,14 +46,19 @@ class AbstractProgressBar(ABC):
 
 
 class ProgressBarCli(AbstractProgressBar):
-    def __init__(self, progress_bar: tqdm.tqdm):
-        self.progress_bar = progress_bar
+    def __init__(self):
 
-    def update(self):
+        self.progress_bar = None
+
+    def update(self, num: int = 1):
+
         self.progress_bar.update()
 
     def complete(self):
+        # self.progress_bar.refresh()
         self.progress_bar.close()
+        self.progress_bar.clear()
+        self.progress_bar = None
 
     def clear(self):
         self.progress_bar.clear()
@@ -62,7 +68,8 @@ class ProgressBarCli(AbstractProgressBar):
         self.progress_bar.set_description(description)
 
     def set_total(self, total: int):
-        self.progress_bar.total = total
+        self.progress_bar = tqdm.tqdm(total=total)
+        # self.progress_bar.total = total
         self.progress_bar.display()
 
     def _draw(self):
@@ -72,9 +79,10 @@ class ProgressBarCli(AbstractProgressBar):
 class ProgressBarGui(AbstractProgressBar):
     def __init__(self, progress_bar: Gauge):
         self.progress_bar = progress_bar
+        self.progress_bar.SetValue(0)
 
-    def update(self):
-        self.progress_bar.SetValue(self.progress_bar.GetValue() + 1)
+    def update(self, num: int = 1):
+        self.progress_bar.SetValue(self.progress_bar.GetValue() + num)
 
     def complete(self):
         pass

@@ -1,21 +1,19 @@
-import sys
-
-import argparse
-import os
-import tqdm
-
-from backend.find_asteroids import find_asteroids
-from backend.source_data import SourceData, get_file_paths
-from user_interface.main_window import start_ui
-from logger.logger import get_logger
-from backend.progress_bar import ProgressBarFactory
-import multiprocessing
-
-
-logger = get_logger()
-
-
 if __name__ == '__main__':
+    import sys
+
+    import argparse
+    import os
+    import tqdm
+
+    # from backend.find_asteroids import find_asteroids
+    from backend.source_data import SourceData, get_file_paths
+    from user_interface.main_window import start_ui
+    from logger.logger import get_logger
+    from backend.progress_bar import ProgressBarFactory
+    import multiprocessing
+
+    logger = get_logger()
+
     multiprocessing.freeze_support()
     version = "0.2.1"
     arg_parser = argparse.ArgumentParser(
@@ -96,12 +94,12 @@ if __name__ == '__main__':
         source_data.load_images(
             progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()),
         )
-        find_asteroids(
-            source_data=source_data,
-            use_img_mask=None,
-            output_folder=provided_args.output_folder,
-            secondary_alignment=provided_args.secondary_alignment,
-            y_splits=provided_args.y_splits,
-            x_splits=provided_args.x_splits,
-            progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm())
-        )
+        # find_asteroids(
+        #     source_data=source_data,
+        #     use_img_mask=None,
+        #     output_folder=provided_args.output_folder,
+        #     secondary_alignment=provided_args.secondary_alignment,
+        #     y_splits=provided_args.y_splits,
+        #     x_splits=provided_args.x_splits,
+        #     progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm())
+        # )

@@ -804,6 +804,7 @@ class SourceData:
                 "vmag-lim": magnitude_limit,
                 "fov-ra-lim": fov_ra_lim,
                 "fov-dec-lim": fov_dec_lim,
+                "api-key": "dGPgCPqYSAVpuUu5xLE8hV9CFc76sQzgQsn3fwen",
 
             }
             logger.log.debug(f"Params: {params}")

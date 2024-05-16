@@ -77,6 +77,7 @@ class LogFileHandler(logging.FileHandler):
 
 
 class Logger:
+    log_level = logging.INFO
     _instance_lock = threading.Lock()
 
     def __new__(cls, text_ctrl=None):
@@ -84,7 +85,7 @@ class Logger:
             if not hasattr(cls, '_instance'):
                 cls._instance = super(Logger, cls).__new__(cls)
                 cls._instance.log = logging.getLogger('MyLogger')
-                cls._instance.log.setLevel(logging.DEBUG)
+                cls._instance.log.setLevel(cls.log_level)
 
                 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
@@ -95,11 +96,11 @@ class Logger:
 
                 # Create another handler to log messages to the console
                 console_handler = logging.StreamHandler()
-                console_handler.setLevel(logging.DEBUG)
+                console_handler.setLevel(cls.log_level)
                 console_handler.setFormatter(formatter)
                 cls._instance.log.addHandler(console_handler)
                 file_handler = LogFileHandler()
-                file_handler.setLevel(logging.DEBUG)
+                file_handler.setLevel(cls.log_level)
                 file_handler.setFormatter(formatter)
                 cls._instance.log.addHandler(file_handler)
                 cls._instance.text_ctrl = text_ctrl

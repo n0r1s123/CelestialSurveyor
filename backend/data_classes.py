@@ -2,38 +2,15 @@ import numpy as np
 from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime
+from astropy.coordinates import SkyCoord
+from typing import Optional
+from astropy.wcs import WCS
 
 
 @dataclass
 class SolveData:
-    """
-    Class to hold astronomical solution data.
-
-    Attributes:
-        ra (Decimal): Right ascension in decimal degrees.
-        dec (Decimal): Declination in decimal degrees.
-        pixel_scale (Decimal): Scale of each pixel in arcseconds.
-    """
-    ra: Decimal
-    dec: Decimal
+    sky_coord: SkyCoord
     pixel_scale: Decimal
-
-    def __post_init__(self):
-        """
-        Ensure the RA and DEC are of Decimal type.
-        """
-        if not isinstance(self.ra, Decimal):
-            raise TypeError("RA must be a Decimal object.")
-        if not isinstance(self.dec, Decimal):
-            raise TypeError("DEC must be a Decimal object.")
-        if not isinstance(self.pixel_scale, Decimal):
-            raise TypeError("Pixel scale must be a Decimal object.")
-
-    def __repr__(self):
-        return f"SolveData(ra={self.ra}, dec={self.dec}, pixel_scale={self.pixel_scale})"
-
-    def __str__(self):
-        return f"SolveData: RA: {self.ra}, DEC: {self.dec}, Pixel Scale: {self.pixel_scale}"
 
 
 @dataclass
@@ -79,8 +56,9 @@ class Header:
     file_name: str
     exposure: Decimal
     timestamp: datetime
-    solve_data: SolveData
     site_location: SiteLocation
+    solve_data: Optional[SolveData] = None
+    wcs: Optional[WCS] = None
 
     def __post_init__(self):
         """
@@ -137,3 +115,14 @@ class Frame:
 
     def __str__(self):
         return f"Frame: Image: {self.image}, Header: {self.header}"
+
+
+@dataclass
+class SharedMemoryParams:
+    shm_name: str
+    shm_size: int
+    shm_shape: tuple
+    shm_dtype: np.dtype
+    y_slice: slice = slice(None, None)  # y slice of original image
+    x_slice: slice = slice(None, None)  # x slice of original image
+

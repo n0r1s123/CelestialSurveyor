@@ -16,7 +16,8 @@ import h5py
 import tensorflow as tf
 from PIL import Image
 
-from .source_data import SourceData, stretch_image
+# from .source_data import SourceData, stretch_image
+from backend.source_data_v2 import SourceDataV2, CHUNK_SIZE
 from .progress_bar import AbstractProgressBar
 
 from logger.logger import get_logger
@@ -30,7 +31,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 logger = get_logger()
 
 
-def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits, x_splits, secondary_alignment: bool, progress_bar: Optional[AbstractProgressBar] = None, model_path="default", event: Optional[Event] = None, ui_frame: Optional[wx.Frame] = None):
+def predict_asteroids(source_data: SourceDataV2, use_img_mask,
+                      progress_bar: Optional[AbstractProgressBar] = None, model_path="default"):
     if use_img_mask is None:
         use_img_mask = [True for _ in range(len(source_data.images))]
 
@@ -38,93 +40,40 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
     logger.log.info(f"Loading model: {model_path}")
     model = decrypt_model(model_path)
     batch_size = 10
+    chunk_generator = source_data.generate_image_chunks()
+    batch_generator = source_data.generate_batch(chunk_generator, batch_size=batch_size, usage_mask=use_img_mask)
+    ys, xs = source_data.get_number_of_chunks()
+    progress_bar_len = len(ys) * len(xs)
 
-    if not secondary_alignment:
-        y_splits = 1
-        x_splits = 1
-    source_data.chop_imgs(y_splits=y_splits, x_splits=x_splits)
-    splits = source_data.gen_splits(y_splits, x_splits, secondary_alignment, use_img_mask, output_folder=output_folder)
+    if progress_bar:
+        progress_bar.set_total(progress_bar_len)
     objects_coords = []
+    for coords, batch in batch_generator:
+        results = model.predict(batch, verbose=0)
+        for res, (y, x) in zip(results, coords):
+            if res > 0.8:
+                objects_coords.append((y, x, res))
+        if progress_bar:
+            progress_bar.update(batch_size)
+    progress_bar.complete()
+    return objects_coords
 
-    max_image = source_data.get_max_image(use_img_mask)
+
+def save_results(source_data: SourceDataV2, results, output_folder, use_img_mask=None):
+    if use_img_mask is None:
+        use_img_mask = [True for _ in range(len(source_data.images))]
+    max_image = source_data.max_image
     dpi = 80
-    height, width = max_image.shape
+    height, width = max_image.shape[:2]
     figsize = width / float(dpi), height / float(dpi)
     fig = plt.figure(figsize=figsize, dpi=dpi)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.imshow(max_image, cmap='gray')
-
-    for imgs, y_offset, x_offset, use_img_mask in splits:
-        multiple_pick = 2
-        ys = np.arange(0, imgs[0].shape[0] - 64 // multiple_pick, 64 // multiple_pick)
-        ys[-1] = imgs[0].shape[0] - 64
-
-        xs = np.arange(0, imgs[0].shape[1] - 64 // multiple_pick, 64 // multiple_pick)
-        xs[-1] = imgs[0].shape[1] - 64
-
-        coords = np.array([np.array([y, x]) for y in ys for x in xs])
-
-        number_of_batches = len(coords) // batch_size + (1 if len(coords) % batch_size else 0)
-        progress_bar_len = number_of_batches * y_splits * x_splits
-
-        if progress_bar:
-            progress_bar.set_total(progress_bar_len)
-        coord_batches = np.array_split(coords, number_of_batches, axis=0)
-
-        for coord_batch in coord_batches:
-            imgs_batch = []
-            ts_pred = []
-            for y, x in coord_batch:
-                if isinstance(event, Event) and event.is_set():
-                    logger.log.info("Stopping processing")
-                    return
-                shrinked = source_data.get_shrinked_img_series(imgs, 64, y, x, use_img_mask)
-                shrinked = source_data.prepare_images(shrinked, source_data.non_linear)
-                timestamps = source_data.timestamps
-                new_timestamps = []
-                for ts, checked in zip(timestamps, use_img_mask):
-                    if checked:
-                        new_timestamps.append(ts)
-                timestamps = new_timestamps
-                shrinked, timestamps = source_data.adjust_series_to_min_len(shrinked, timestamps)
-                timestamps = source_data.prepare_timestamps(timestamps)
-                timestamps = np.swapaxes(timestamps, 0, 1)
-                imgs_batch.append(shrinked)
-                ts_pred.append(timestamps)
-            fast_batch = np.array(imgs_batch)
-            # slow_batch = fast_batch[:, ::4]
-
-            # results = model.predict([fast_batch, slow_batch], verbose=0)
-            results = model.predict(fast_batch, verbose=0)
-            for res, (y, x) in zip(results, coord_batch):
-                if res > 0.5:
-                    objects_coords.append((y + y_offset, x + x_offset, res))
-            if progress_bar:
-                try:
-                    progress_bar.update()
-                except:
-                    pass
-    progress_bar.complete()
-
-    ########
-    # Save results
-    ########
-    # max_image = source_data.get_max_image(use_img_mask)
-    # dpi = 80
-    # height, width = max_image.shape
-    # What size does the figure need to be in inches to fit the image?
-
-
-
-    # figsize = width / float(dpi), height / float(dpi)
-    # fig = plt.figure(figsize=figsize, dpi=dpi)
-    # ax = fig.add_axes([0, 0, 1, 1])
-    # ax.imshow(max_image, cmap='gray')
     gif_size = 5
     processed = []
-    for coord_num, (y, x, probability) in enumerate(objects_coords):
+    for coord_num, (y, x, probability) in enumerate(results):
         probability = probability[0]
-        color = "yellow" if probability <= 0.75 else "green"
+        color = "yellow" if probability <= 0.9 else "green"
         plt.gca().add_patch(Rectangle((x, y), 64, 64,
                                       edgecolor=color,
                                       facecolor='none',
@@ -142,24 +91,25 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                                           facecolor='none',
                                           lw=4))
             plt.text(x_new + 45, y_new + 60, str(len(processed)), color="red", fontsize=40)
-
-            frames = source_data.get_shrinked_img_series(source_data.images, 64 * gif_size, y_new, x_new, use_img_mask)
-            if not source_data.non_linear:
-                frames = np.array([stretch_image(i) for i in frames])
+            frames = source_data.crop_image(
+                source_data.images,
+                (y_new, y_new + size),
+                (x_new, x_new + size),
+                usage_mask=use_img_mask)
             frames = frames * 255
             new_shape = list(frames.shape)
             new_shape[1] += 20
             new_frames = np.zeros(new_shape)
             new_frames[:, :-20, :] = frames
             used_timestamps = []
-            for is_used, (_, ts, *_) in zip(use_img_mask, source_data.timestamped_file_list):
+            for is_used, header in zip(use_img_mask, source_data.headers):
                 if is_used:
-                    used_timestamps.append(ts)
+                    used_timestamps.append(header.timestamp)
 
             for frame, original_ts in zip(new_frames, used_timestamps):
                 cv2.putText(frame, text=original_ts.strftime("%d/%m/%Y %H:%M:%S %Z"), org=(70, 64 * gif_size + 16),
                             fontFace=1, fontScale=1, color=(255, 255, 255), thickness=0)
-            new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in new_frames]
+            new_frames = [Image.fromarray(frame.reshape(frame.shape[0], frame.shape[1])).convert('L').convert('P') for frame in new_frames]
             new_frames[0].save(
                 os.path.join(output_folder, f"{len(processed)}.gif"),
                 save_all=True,
@@ -167,17 +117,24 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                 duration=200,
                 loop=0)
 
-    plt.savefig(os.path.join(output_folder, f"results.png"))
+    not_annotated = plt
 
+    plt.savefig(os.path.join(output_folder, f"results.png"))
+    return not_annotated
+
+
+def annotate_results(source_data: SourceDataV2, plot: plt, output_folder: str):
     start_session_frame_nums = [0]
-    start_ts = source_data.timestamps[0]
-    for num, item in enumerate(source_data.timestamps[1:], start=1):
-        if item - start_ts > datetime.timedelta(hours=15):
+
+    start_ts = source_data.headers[0].timestamp
+    for num, header in enumerate(source_data.headers[1:], start=1):
+        if header.timestamp - start_ts > datetime.timedelta(hours=12):
             start_session_frame_nums.append(num)
-            start_ts = item
+            start_ts = header.timestamp
     for start_frame_num in start_session_frame_nums:
-        for obj_type in source_data.request_visible_targets(start_frame_num):
+        for obj_type in source_data.fetch_known_asteroids_for_image(start_frame_num):
             for item in obj_type:
+                print(f"Known object: {item.name}")
                 target_x, target_y = item.pixel_coordinates
                 target_x = round(float(target_x))
                 target_y = round(float(target_y))
@@ -186,24 +143,24 @@ def find_asteroids(source_data:SourceData, use_img_mask, output_folder, y_splits
                     y = (target_y + 4, target_y + 14)
                 else:
                     y = (target_y - 4, target_y - 14)
-                plt.plot(x, y, color="orange", linewidth=2)
+                plot.plot(x, y, color="orange", linewidth=2)
 
                 if target_y < 50:
                     text_y = target_y + 20 + 20
                 else:
                     text_y = target_y - 20
 
-                if target_x > source_data.img_shape[1] - 300:
+                if target_x > source_data.shape[1] - 300:
                     text_x = target_x - 300
                 else:
                     text_x = target_x
-                plt.text(text_x, text_y, f"{item.name}: {item.magnitude}", color="orange", fontsize=20)
-
-    plt.axis('off')
-    plt.savefig(os.path.join(output_folder, f"results_annotated.png"))
-    logger.log.info(f"Calculations are finished. Check results folder: {output_folder}")
-    if ui_frame:
-        wx.CallAfter(ui_frame.on_process_finished)
+                plot.text(text_x, text_y, f"{item.name}: {item.magnitude}", color="orange", fontsize=20)
+    #
+    # plt.axis('off')
+    plot.savefig(os.path.join(output_folder, f"results_annotated.png"))
+    # logger.log.info(f"Calculations are finished. Check results folder: {output_folder}")
+    # if ui_frame:
+    #     wx.CallAfter(ui_frame.on_process_finished)
 
 
 # Decrypt the model weights
@@ -259,11 +216,10 @@ def get_model_path():
 
 
 def get_big_rectangle_coords(y, x, image_shape, gif_size):
-    size = 64
+    size = CHUNK_SIZE
     box_x = 0 if x - size * (gif_size // 2) < 0 else x - size * (gif_size // 2)
     box_y = 0 if y - size * (gif_size // 2) < 0 else y - size * (gif_size // 2)
     image_size_y, image_size_x = image_shape[:2]
     box_x = image_size_x - size * gif_size if x + size * (gif_size // 2 + 1) > image_size_x else box_x
     box_y = image_size_y - size * gif_size if y + size * (gif_size // 2 + 1) > image_size_y else box_y
     return box_y, box_x, size * gif_size
-
