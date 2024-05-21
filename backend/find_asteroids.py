@@ -40,8 +40,8 @@ def predict_asteroids(source_data: SourceDataV2, use_img_mask,
     logger.log.info(f"Loading model: {model_path}")
     model = decrypt_model(model_path)
     batch_size = 10
-    chunk_generator = source_data.generate_image_chunks()
-    batch_generator = source_data.generate_batch(chunk_generator, batch_size=batch_size, usage_mask=use_img_mask)
+    chunk_generator = source_data.generate_image_chunks(usage_mask=use_img_mask)
+    batch_generator = source_data.generate_batch(chunk_generator, batch_size=batch_size)
     ys, xs = source_data.get_number_of_chunks()
     progress_bar_len = len(ys) * len(xs)
 

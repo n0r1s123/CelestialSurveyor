@@ -49,8 +49,8 @@ class TrainingSourceDataV2(SourceDataV2):
         file_list = [
             os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER) if ".tif" in item]
         star_samples = np.array([np.array(tifffile.tifffile.imread(item)) for item in file_list])
-        if len(star_samples.shape) == 3:
-            star_samples = np.reshape(star_samples, (*star_samples.shape, 1))
+        if len(star_samples.shape) == 4:
+            star_samples = np.reshape(star_samples, star_samples.shape[:3])
         return star_samples
 
     def __get_exclusion_boxes_paths(self):
@@ -101,12 +101,15 @@ class TrainingSourceDataV2(SourceDataV2):
                     break
             else:
                 res = np.copy(self.images[:, y:y + CHUNK_SIZE, x:x + CHUNK_SIZE])
+                res = np.reshape(res, res.shape[:3])
                 return res
 
     @classmethod
     def insert_star_by_coords(cls, image, star, coords):
         star_y_size, star_x_size = star.shape[:2]
         image_y_size, image_x_size = image.shape[:2]
+        star = np.reshape(star, (star.shape[:2]))
+        image = np.reshape(image, (image.shape[:2]))
         x, y = coords
         x = round(x)
         y = round(y)
@@ -190,7 +193,7 @@ class TrainingSourceDataV2(SourceDataV2):
         start_x = random.randrange(0, CHUNK_SIZE)
         start_frame_idx = random.randrange(0, len(self.images))
         timestamps, exposure = self.generate_timestamps()
-        brightness_above_noize = float(random.randrange(400, 1001)) / 1000
+        brightness_above_noize = float(random.randrange(500, 1001)) / 1000
         star_sample = random.choice(self.star_samples)
         total_time = (timestamps[-1] - timestamps[0]).total_seconds()
         total_time /= 3600
@@ -204,7 +207,8 @@ class TrainingSourceDataV2(SourceDataV2):
 
     def draw_object_on_image_series_numpy(self, rand_obg):
         imgs = self.get_random_shrink()
-        old_images = np.copy(imgs.copy)
+        imgs = np.reshape(imgs, (imgs.shape[:3]))
+        old_images = np.copy(imgs)
         drawn = 0
 
         while not drawn:
@@ -241,19 +245,11 @@ class TrainingSourceDataV2(SourceDataV2):
                 new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, rand_obg.exposure)
                 result.append(new_img)
             result = np.array(result)
-            #
-            # import cv2
-            # for img1, img2 in zip(old_images, result):
-            #     cv2.imshow('img', img1)
-            #     cv2.waitKey(0)
-            #     cv2.imshow('img', img2)
-            #     cv2.waitKey(0)
 
             drawn = 1
             if (result == old_images).all():
                 drawn = 0
                 rand_obg = self.generate_random_objects()
-                print("Object not drawn")
         return result, drawn
 
     def draw_variable_star(self, rand_obj):

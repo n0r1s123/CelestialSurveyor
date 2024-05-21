@@ -11,7 +11,8 @@ from astropy.wcs import WCS
 from logger.logger import get_logger
 
 from backend.consuming_functions import (load_headers, load_image, align_images, load_images, stretch_images,
-                                         PIXEL_TYPE, SECONDARY_ALIGNMENT_OFFSET, plate_solve, align_images_wcs)
+                                         PIXEL_TYPE, SECONDARY_ALIGNMENT_OFFSET, plate_solve, align_images_wcs,
+                                         plate_solve_image)
 from backend.data_classes import SharedMemoryParams
 from backend.progress_bar import ProgressBarCli, AbstractProgressBar
 from backend.data_classes import Header
@@ -33,7 +34,7 @@ class SourceDataV2:
         self.headers.sort(key=lambda header: header.timestamp)
         self.original_frames = None
         self.shm = None
-        self.shm_name = uuid.uuid4().hex
+        self.shm_name = uuid.uuid4().hex + ".np"
         self.shm_params = None
         self.footprint_map = None
         self.to_debayer = to_debayer
@@ -82,14 +83,18 @@ class SourceDataV2:
             return self.__images
 
     def images_from_buffer(self):
-        images = np.copy(self.images)
-        self.shm.close()
-        self.shm.unlink()
-        self.shm = None
+        # images = np.copy(self.images)
+        images = np.zeros(self.images.shape, dtype=PIXEL_TYPE)
+        np.copyto(images, self.images)
+        name = self.shm_name
+        self.original_frames._mmap.close()
+        del self.original_frames
+        self.original_frames = None
+        os.remove(name)
         self.__original_frames = None
-        # del(self._original_frames)
         self.__shared = False
         self.__images = images
+        print(type(self.images))
 
     @property
     def max_image(self):
@@ -101,15 +106,20 @@ class SourceDataV2:
             self.__wcs, _ = self.plate_solve()
         return self.__wcs
 
+    @wcs.setter
+    def wcs(self, value):
+        self.__wcs = value
+
     def load_images(self, progress_bar: Optional[AbstractProgressBar] = None) -> None:
         logger.log.info("Loading images...")
         file_list = [header.file_name for header in self.headers]
         img = load_image(file_list[0])
         shape = (len(file_list), *img.shape)
-        self.shm = SharedMemory(name=self.shm_name, create=True, size=img.nbytes * len(file_list))
+        # self.shm = SharedMemory(name=self.shm_name, create=True, size=img.nbytes * len(file_list))
         self.shm_params = SharedMemoryParams(
-            shm_name=self.shm.name, shm_shape=shape, shm_size=img.nbytes * len(file_list), shm_dtype=img.dtype)
-        self.original_frames = np.ndarray(shape=shape, dtype=img.dtype, buffer=self.shm.buf)
+            shm_name=self.shm_name, shm_shape=shape, shm_size=img.nbytes * len(file_list), shm_dtype=img.dtype)
+        # self.original_frames = np.ndarray(shape=shape, dtype=img.dtype, buffer=self.shm.buf)
+        self.original_frames = np.memmap(self.shm_name, dtype=PIXEL_TYPE, mode='w+', shape=shape)
         load_images(file_list, self.shm_params, to_debayer=self.to_debayer, progress_bar=progress_bar)
 
     @staticmethod
@@ -236,17 +246,30 @@ class SourceDataV2:
             print(len(self.footprint_map))
             print(len(self.usage_map))
             footprint_map = self.footprint_map[np.array(self.usage_map, dtype=bool)]
+            import cv2
+            for header, item in zip(self.headers, footprint_map):
+                # item = item.astype("uint8")
+                # item *= 255
+                # cv2.imshow("test", item)
+                # cv2.waitKey(0)
+                print(header.file_name)
+                print(header.wcs.pixel_to_world(self.origional_shape[1]//2, self.original_shape[2]//2))
+
+
 
         for item in footprint_map:
             y_border, x_border = self.calculate_crop(item)
+
             y_borders.append(y_border)
             x_borders.append(x_border)
         y_borders = np.array(y_borders)
         x_borders = np.array(x_borders)
         self.y_borders = slice(int(np.max(y_borders[:, 0])), int(np.min(y_borders[:, 1])))
         self.x_borders = slice(int(np.max(x_borders[:, 0])), int(np.min(x_borders[:, 1])))
+        print(self.y_borders, self.x_borders)
         self.__cropped = True
         self.footprint_map = None
+        self.wcs, _ = self.plate_solve(0)
 
     def secondary_align_images(self, y_splits: int = 3, x_splits: int = 3,
                                progress_bar: Optional[AbstractProgressBar] = None) -> None:
@@ -278,38 +301,47 @@ class SourceDataV2:
     def make_master_dark(self, filenames: list[str], progress_bar: Optional[AbstractProgressBar] = None) -> np.ndarray:
         shape = (len(filenames), *self.origional_shape[1:])
         size = self.original_frames.itemsize
-        shm_name = uuid.uuid4().hex + "_darks"
+        shm_name = uuid.uuid4().hex + "_darks.np"
         for value in shape:
             size *= value
-        shm = SharedMemory(name=shm_name, create=True, size=size)
+        # shm = SharedMemory(name=shm_name, create=True, size=size)
         shm_params = SharedMemoryParams(
-            shm_name=shm.name, shm_shape=shape, shm_size=size, shm_dtype=PIXEL_TYPE)
+            shm_name=shm_name, shm_shape=shape, shm_size=size, shm_dtype=PIXEL_TYPE)
+        darks = np.memmap(shm_params.shm_name, dtype=PIXEL_TYPE, mode='w+', shape=shape)
         load_images(filenames, shm_params, progress_bar=progress_bar, to_debayer=self.to_debayer)
-        darks = np.ndarray(shape=shape, dtype=PIXEL_TYPE, buffer=shm.buf)
+        # darks = np.ndarray(shape=shape, dtype=PIXEL_TYPE, buffer=shm.buf)
         master_dark = np.average(darks, axis=0)
-        shm.close()
-        shm.unlink()
+        darks._mmap.close()
+        del darks
+
+        os.remove(shm_name)
+        # shm.close()
+        # shm.unlink()
         return master_dark
 
     def make_master_flat(self, flat_filenames: list[str], dark_flat_filenames: Optional[list[str]] = None,
                          progress_bar: Optional[AbstractProgressBar] = None) -> np.ndarray:
         flat_shape = (len(flat_filenames), *self.origional_shape[1:])
         flat_size = self.original_frames.itemsize
-        flat_shm_name = uuid.uuid4().hex + "_flats"
+        flat_shm_name = uuid.uuid4().hex + "_flats.np"
         for value in flat_shape:
             flat_size *= value
-        flat_shm = SharedMemory(name=flat_shm_name, create=True, size=flat_size)
+        # flat_shm = SharedMemory(name=flat_shm_name, create=True, size=flat_size)
         flat_shm_params = SharedMemoryParams(
-            shm_name=flat_shm.name, shm_shape=flat_shape, shm_size=flat_size, shm_dtype=PIXEL_TYPE)
+            shm_name=flat_shm_name, shm_shape=flat_shape, shm_size=flat_size, shm_dtype=PIXEL_TYPE)
+        flats = np.memmap(flat_shm_params.shm_name, dtype=PIXEL_TYPE, mode='w+', shape=flat_shape)
         load_images(flat_filenames, flat_shm_params, progress_bar=progress_bar, to_debayer=self.to_debayer)
-        flats = np.ndarray(shape=flat_shape, dtype=PIXEL_TYPE, buffer=flat_shm.buf)
+        # flats = np.ndarray(shape=flat_shape, dtype=PIXEL_TYPE, buffer=flat_shm.buf)
         if dark_flat_filenames is not None:
             master_dark_flat = self.make_master_dark(dark_flat_filenames, progress_bar=progress_bar)
             for flat in flats:
                 flat -= master_dark_flat
         master_flat = np.average(flats, axis=0)
-        flat_shm.close()
-        flat_shm.unlink()
+        flats._mmap.close()
+        del flats
+        os.remove(flat_shm_name)
+        # flat_shm.close()
+        # flat_shm.unlink()
         return master_flat
 
     def load_flats(self, flat_filenames: list[str], progress_bar: Optional[AbstractProgressBar] = None) -> np.ndarray:
@@ -318,14 +350,19 @@ class SourceDataV2:
         flat_shm_name = uuid.uuid4().hex + "_flats"
         for value in flat_shape:
             flat_size *= value
-        flat_shm = SharedMemory(name=flat_shm_name, create=True, size=flat_size)
+        # flat_shm = SharedMemory(name=flat_shm_name, create=True, size=flat_size)
         flat_shm_params = SharedMemoryParams(
-            shm_name=flat_shm.name, shm_shape=flat_shape, shm_size=flat_size, shm_dtype=PIXEL_TYPE)
+            shm_name=flat_shm_name, shm_shape=flat_shape, shm_size=flat_size, shm_dtype=PIXEL_TYPE)
+        flats = np.memmap(flat_shm_params.shm_name, dtype=PIXEL_TYPE, mode='w+', shape=flat_shape)
         load_images(flat_filenames, flat_shm_params, progress_bar=progress_bar, to_debayer=self.to_debayer)
-        flats = np.copy(np.ndarray(shape=flat_shape, dtype=PIXEL_TYPE, buffer=flat_shm.buf))
-        flat_shm.close()
-        flat_shm.unlink()
-        return flats
+        # flats = np.copy(np.ndarray(shape=flat_shape, dtype=PIXEL_TYPE, buffer=flat_shm.buf))
+        # flat_shm.close()
+        # flat_shm.unlink()
+        res = np.copy(flats)
+        flats._mmap.close()
+        del flats
+        os.remove(flat_shm_name)
+        return res
 
 
     def calibrate_images(self, dark_files: Optional[list[str]] = None, flat_files: Optional[list[str]] = None,
@@ -353,29 +390,42 @@ class SourceDataV2:
         xs[-1] = self.shape[2] - size_x
         return ys, xs
 
-    def generate_image_chunks(self, size: tuple[int, int] = (CHUNK_SIZE, CHUNK_SIZE), overlap=0.5):
+    def generate_image_chunks(self, size: tuple[int, int] = (CHUNK_SIZE, CHUNK_SIZE), overlap=0.5, usage_mask: Optional[np.ndarray] = None):
+        if usage_mask is None:
+            usage_mask = np.ones(len(self.images), dtype=bool)
         size_y, size_x = size
         ys, xs = self.get_number_of_chunks(size, overlap)
         coordinates = ((y, x) for y in ys for x in xs)
         for y, x in coordinates:
             y, x = int(y), int(x)
-            yield (y, x), self.prepare_images(np.copy(self.images[:, y:y + size_y, x:x + size_x]))
+            imgs = self.images[usage_mask][:, y:y + size_y, x:x + size_x]
+            # slow_images = []
+            # for i in range(len(imgs)):
+            #     if i % 4 == 0:
+            #         slow_images.append(np.average(imgs[i:i + 4], axis=0))
+            # slow_images = np.array(slow_images)
+            # yield (y, x), self.prepare_images(np.copy(imgs)), self.prepare_images(slow_images)
+            yield (y, x), self.prepare_images(imgs)
 
-    def generate_batch(self, chunk_generator, batch_size: int, usage_mask: Optional[np.ndarray] = None):
+    def generate_batch(self, chunk_generator, batch_size: int):
         batch = []
         coords = []
-        if usage_mask is None:
-            usage_mask = np.ones(len(self.images), dtype=bool)
+        slow_batch = []
+        # for coord, chunk, slow_chunk in chunk_generator:
         for coord, chunk in chunk_generator:
             batch.append(chunk)
             coords.append(coord)
+            # slow_batch.append(slow_chunk)
             if len(batch) == batch_size:
-                yield coords, np.array(batch, dtype=PIXEL_TYPE)[:, usage_mask]
+                # yield coords, np.array(batch), np.array(slow_batch)
+                yield coords, np.array(batch)
                 batch = []
                 coords = []
+                slow_batch = []
         if len(batch) > 0:
             # return last portion of chunks. last batch may be less than batch_size
-            yield coords, np.array(batch, dtype=PIXEL_TYPE)[:, usage_mask]
+            # yield coords, np.array(batch), np.array(slow_batch)
+            yield coords, np.array(batch)
 
 
     @staticmethod
@@ -388,6 +438,7 @@ class SourceDataV2:
         images -= cls.estimate_image_noize_level(images)
         images = images - np.min(images)
         images = images / np.max(images)
+        images = np.reshape(images, (*images.shape[:3], 1))
         return images
 
     @staticmethod
@@ -426,32 +477,7 @@ class SourceDataV2:
 
     def plate_solve(self, ref_idx: int = 0, sky_coord: Optional[np.ndarray] = None):
         logger.log.info("Plate solving...")
-        # and the size of its field of view
-        header_data = self.headers[ref_idx].solve_data
-        pixel = header_data.pixel_scale * u.arcsec  # known pixel scale
-        img = np.copy(self.images[ref_idx])
-        img = np.reshape(img, (img.shape[0], img.shape[1]))
-        img = img * (256 * 256 - 1)
-        img = img.astype(np.uint16)
-
-        shape = img.shape
-        fov = np.min(shape[:2]) * pixel.to(u.deg)
-        if sky_coord is None:
-            sky_coord = twirl.gaia_radecs(header_data.sky_coord, fov)[0:200]
-            sky_coord = twirl.geometry.sparsify(sky_coord, 0.1)
-            sky_coord = sky_coord[:25]
-
-        # detect stars in the image
-        tmp_pixel_coords = twirl.find_peaks(img, threshold=1)[0:200]
-        pixel_coords = []
-        for x, y in tmp_pixel_coords:
-            dist_from_center_x = x - shape[1] // 2
-            dist_from_center_y = y - shape[0] // 2
-            if np.sqrt(dist_from_center_x ** 2 + dist_from_center_y ** 2) < min(shape) // 2:
-                pixel_coords.append([x, y])
-        pixel_coords = np.array(pixel_coords[:25])
-        wcs = twirl.compute_wcs(pixel_coords, sky_coord, asterism=4)
-        logger.log.info(f"Image is plate solved successfully. Solution:\n{wcs}")
+        wcs, sky_coord = plate_solve_image(self.images[ref_idx], header=self.headers[ref_idx], sky_coord=sky_coord)
         self.__wcs = wcs
         return wcs, sky_coord
 
@@ -542,6 +568,9 @@ if __name__ == '__main__':
     file_list = SourceDataV2.make_file_list(folder)
     source_data = SourceDataV2(file_list, to_debayer=True)
     source_data.load_images(progress_bar=ProgressBarCli())
+    # for img in source_data.original_frames:
+    print(source_data.estimate_image_noize_level(source_data.original_frames))
+    print(np.median(source_data.original_frames))
 
     # dark_folder = "E:\\Astro\\NGC2264\\Dark_600"
     # dark_list = SourceDataV2.make_file_list(dark_folder)

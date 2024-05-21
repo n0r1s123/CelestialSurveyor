@@ -24,6 +24,7 @@ from backend.data_classes import SharedMemoryParams
 import twirl
 from astropy.wcs import WCS
 from reproject import reproject_interp
+from photutils.aperture import CircularAperture
 
 
 logger = get_logger()
@@ -252,21 +253,24 @@ def load_image(file_path: str, to_debayer: bool = False) -> np.ndarray:
 def load_worker(indexes: list[int], file_list: list[str], shm_params: SharedMemoryParams, progress_queue: Queue,
                 to_debayer: bool = False) -> None:
     try:
-        shm = SharedMemory(name=shm_params.shm_name, create=False)
-        imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+        # shm = SharedMemory(name=shm_params.shm_name, create=False)
+        # imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+        imgs = np.memmap(shm_params.shm_name, dtype=PIXEL_TYPE, mode='r+', shape=shm_params.shm_shape)
         for img_idx in indexes:
             img_data = load_image(file_list[img_idx], to_debayer)
             imgs[img_idx] = img_data
             progress_queue.put(img_idx)
-        shm.close()
+            imgs.flush()
+        # shm.close()
     except:
         import traceback
         traceback.print_exc()
 
 def align_worker(img_indexes: list[int], shm_params: SharedMemoryParams, progress_queue: Queue) -> tuple[list[int], list[bool], list[np.ndarray]]:
 
-    shm = SharedMemory(name=shm_params.shm_name, create=False)
-    imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    # shm = SharedMemory(name=shm_params.shm_name, create=False)
+    # imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    imgs = np.memmap(shm_params.shm_name, dtype=PIXEL_TYPE, mode='r+', shape=shm_params.shm_shape)
     footprints = []
     successes = []
     if shm_params.y_slice.start is not None and shm_params.y_slice.stop is not None:
@@ -290,6 +294,7 @@ def align_worker(img_indexes: list[int], shm_params: SharedMemoryParams, progres
                 fill_value=0,
                 max_control_points=50,
                 min_area=5)
+            imgs.flush()
         except Exception as e:
             footprint = None
             success = False
@@ -300,7 +305,7 @@ def align_worker(img_indexes: list[int], shm_params: SharedMemoryParams, progres
         successes.append(success)
 
         progress_queue.put(img_idx)
-    shm.close()
+    # shm.close()
 
     return img_indexes, successes, footprints
 
@@ -309,7 +314,7 @@ def align_worker(img_indexes: list[int], shm_params: SharedMemoryParams, progres
 def load_images(file_list: list[str], shm_params: SharedMemoryParams, to_debayer: bool = False,
                 progress_bar: Optional[AbstractProgressBar] = None) -> None:
     available_cpus = cpu_count()
-    used_cpus = min(available_cpus//2, len(file_list))
+    used_cpus = min(available_cpus, len(file_list))
     with (Pool(processes=used_cpus) as pool):
         m = ctx.Manager()
         progress_queue = m.Queue()
@@ -341,7 +346,7 @@ def align_images(shm_params: SharedMemoryParams,
 
     available_cpus = cpu_count()
     frames_num = shm_params.shm_shape[0] - 1
-    used_cpus = min(available_cpus//2, frames_num)
+    used_cpus = min(available_cpus, frames_num)
     with Pool(processes=used_cpus) as pool:
         m = ctx.Manager()
         progress_queue = m.Queue()
@@ -379,7 +384,7 @@ def stretch_images(shm_params: SharedMemoryParams,
 
     available_cpus = cpu_count()
     frames_num = shm_params.shm_shape[0] - 1
-    used_cpus = min(available_cpus//2, frames_num)
+    used_cpus = min(available_cpus, frames_num)
     with Pool(processes=used_cpus) as pool:
         m = ctx.Manager()
         progress_queue = m.Queue()
@@ -399,14 +404,20 @@ def stretch_images(shm_params: SharedMemoryParams,
 
 def stretch_worker(img_idexes: list[int], shm_params: SharedMemoryParams, progress_queue: ctx.Queue,
                    ) -> None:
-    shm = SharedMemory(name=shm_params.shm_name, create=False)
-    imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
-    for img_idx in img_idexes:
-        img = imgs[img_idx, shm_params.y_slice, shm_params.x_slice]
-        imgs[img_idx, shm_params.y_slice, shm_params.x_slice] = Stretch().stretch(img)
-        progress_queue.put(img_idx)
+    # shm = SharedMemory(name=shm_params.shm_name, create=False)
+    # imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    try:
+        imgs = np.memmap(shm_params.shm_name, dtype=shm_params.shm_dtype, mode='r+', shape=shm_params.shm_shape)
+        for img_idx in img_idexes:
+            img = imgs[img_idx, shm_params.y_slice, shm_params.x_slice]
+            imgs[img_idx, shm_params.y_slice, shm_params.x_slice] = Stretch().stretch(img)
+            progress_queue.put(img_idx)
+            imgs.flush()
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
 
-    shm.close()
+    # shm.close()
 
 
 def plate_solve_image(image: np.ndarray, header: Header, sky_coord: Optional[np.ndarray] = None):
@@ -416,8 +427,8 @@ def plate_solve_image(image: np.ndarray, header: Header, sky_coord: Optional[np.
     pixel = header_data.pixel_scale * u.arcsec  # known pixel scale
     img = np.copy(image)
     img = np.reshape(img, (img.shape[0], img.shape[1]))
-    img = img * (256 * 256 - 1)
-    img = img.astype(np.uint16)
+    # img = img * (256 * 256 - 1)
+    # img = img.astype(np.uint16)
 
     shape = img.shape
     fov = np.min(shape[:2]) * pixel.to(u.deg)
@@ -425,30 +436,53 @@ def plate_solve_image(image: np.ndarray, header: Header, sky_coord: Optional[np.
         sky_coord = twirl.gaia_radecs(header_data.sky_coord, fov)[0:200]
         sky_coord = twirl.geometry.sparsify(sky_coord, 0.1)
         sky_coord = sky_coord[:25]
+    top_left_corner = (slice(None, img.shape[0] // 2), slice(None, img.shape[1] // 2), (0, 0))
+    bottom_left_corner = (slice(img.shape[0] // 2, None), slice(None, img.shape[1] // 2), (img.shape[0]//2, 0))
+    top_right_corner = (slice(None, img.shape[0] // 2), slice(img.shape[1] // 2, None), (0, img.shape[1]//2))
+    bottom_right_corner = (slice(img.shape[0] // 2, None), slice(img.shape[1] // 2, None), (img.shape[0]//2, img.shape[1]//2))
+    corners = [top_left_corner, bottom_left_corner, top_right_corner, bottom_right_corner]
+    all_corner_peaks = []
+    for y_slice, x_slice, (y_offset, x_offset) in corners:
+        peak_cos = twirl.find_peaks(img[y_slice, x_slice], threshold=1)[0:200]
+        corner_peaks = []
+        for x, y in peak_cos:
+            y += y_offset
+            x += x_offset
+            dist_from_center_x = x - shape[1] // 2
+            dist_from_center_y = y - shape[0] // 2
+            if np.sqrt(dist_from_center_x**2 + dist_from_center_y**2) < min(shape) // 2:
+                corner_peaks.append([x, y])
+        all_corner_peaks.extend(corner_peaks[:8])
+    all_corner_peaks = np.array(all_corner_peaks)
+
 
     # detect stars in the image
-    tmp_pixel_coords = twirl.find_peaks(img, threshold=1)[0:200]
-    pixel_coords = []
-    for x, y in tmp_pixel_coords:
-        dist_from_center_x = x - shape[1] // 2
-        dist_from_center_y = y - shape[0] // 2
-        if np.sqrt(dist_from_center_x ** 2 + dist_from_center_y ** 2) < min(shape) // 2:
-            pixel_coords.append([x, y])
-    pixel_coords = np.array(pixel_coords[:25])
-    wcs = twirl.compute_wcs(pixel_coords, sky_coord, asterism=4)
+    # tmp_pixel_coords = twirl.find_peaks(img, threshold=1)[0:200]
+    # pixel_coords = []
+    # for x, y in all_corner_peaks:
+    #     dist_from_center_x = x - shape[1] // 2
+    #     dist_from_center_y = y - shape[0] // 2
+    #     if np.sqrt(dist_from_center_x ** 2 + dist_from_center_y ** 2) < min(shape) // 2:
+    #         pixel_coords.append([x, y])
+    # pixel_coords = np.array(pixel_coords[:25])
+    # import matplotlib.pyplot as plt
+    # plt.imshow(img, vmin=np.median(img), vmax=3 * np.median(img), cmap="Greys_r")
+    # _ = CircularAperture(pixel_coords, r=10.0).plot(color="y")
+    wcs = twirl.compute_wcs(all_corner_peaks, sky_coord, asterism=4)
     # logger.log.info(f"Image is plate solved successfully. Solution:\n{wcs}")
     return wcs, sky_coord
 
 def plate_solve(shm_params: SharedMemoryParams, headers: list[Header],
                  progress_bar: Optional[AbstractProgressBar] = None):
     logger.log.info("Plate solving...")
-    shm = SharedMemory(name=shm_params.shm_name, create=False)
-    imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    # shm = SharedMemory(name=shm_params.shm_name, create=False)
+    # imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    imgs = np.memmap(shm_params.shm_name, dtype=shm_params.shm_dtype, mode='r+', shape=shm_params.shm_shape)
     _, reference_stars = plate_solve_image(imgs[0], headers[0])
-    shm.close()
+    # shm.close()
     available_cpus = cpu_count()
     frames_num = shm_params.shm_shape[0]
-    used_cpus = min(available_cpus // 2, frames_num)
+    used_cpus = min(available_cpus, frames_num)
     with Pool(processes=used_cpus) as pool:
         m = ctx.Manager()
         progress_queue = m.Queue()
@@ -472,24 +506,25 @@ def plate_solve(shm_params: SharedMemoryParams, headers: list[Header],
 
 def plate_solve_worker(img_idexes: list[int], header: Header, shm_params: SharedMemoryParams,
                        reference_stars: np.ndarray, progress_queue: Queue):
-    shm = SharedMemory(name=shm_params.shm_name, create=False)
-    imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    # shm = SharedMemory(name=shm_params.shm_name, create=False)
+    # imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    imgs = np.memmap(shm_params.shm_name, dtype=shm_params.shm_dtype, mode='r', shape=shm_params.shm_shape)
     res = []
     for img_idx in img_idexes:
         img = imgs[img_idx]
         wcs, _ = plate_solve_image(img, header, reference_stars)
         progress_queue.put(img_idx)
         res.append((img_idx, wcs))
-    shm.close()
+    # shm.close()
     return res
 
 @measure_execution_time
 def align_images_wcs(shm_params: SharedMemoryParams, all_wcses: list[WCS],
                      progress_bar: Optional[AbstractProgressBar] = None) -> tuple[list[bool], np.ndarray]:
 
-    available_cpus = min(cpu_count(), 4)
+    available_cpus = min(cpu_count(), 8)
     frames_num = shm_params.shm_shape[0]
-    used_cpus = min(available_cpus // 2, frames_num)
+    used_cpus = min(available_cpus, frames_num)
     with Pool(processes=used_cpus) as pool:
         m = ctx.Manager()
         progress_queue = m.Queue()
@@ -521,8 +556,9 @@ def align_images_wcs(shm_params: SharedMemoryParams, all_wcses: list[WCS],
     return success_map, footprint_map
 def align_wcs_worker(img_indexes: list[int], shm_params: SharedMemoryParams, progress_queue: Queue, ref_wcs: WCS, all_wcses: list[WCS]) -> tuple[list[int], list[bool], list[np.ndarray]]:
 
-    shm = SharedMemory(name=shm_params.shm_name, create=False)
-    imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    # shm = SharedMemory(name=shm_params.shm_name, create=False)
+    # imgs = np.ndarray(shape=shm_params.shm_shape, dtype=shm_params.shm_dtype, buffer=shm.buf)
+    imgs = np.memmap(shm_params.shm_name, dtype=shm_params.shm_dtype, mode='r+', shape=shm_params.shm_shape)
     footprints = []
     successes = []
     for img_idx in img_indexes:
@@ -535,24 +571,19 @@ def align_wcs_worker(img_indexes: list[int], shm_params: SharedMemoryParams, pro
                 shape_out=shm_params.shm_shape[1:3],
                 output_array=imgs[img_idx],
             )
-            # imgs[img_idx] = np.reshape(img, shm_params.shm_shape[1:])
+            imgs.flush()
         except Exception as e:
             footprint = np.ones(shm_params.shm_shape[1:], dtype=bool)
             success = False
-            import traceback
-            print(img_idx)
-            traceback.print_exc()
         else:
             success = True
             footprint = 1 - footprint
             footprint = np.array(footprint, dtype=bool)
-            print(footprint.shape)
-            print(footprint)
         footprints.append(footprint)
         successes.append(success)
 
         progress_queue.put(img_idx)
-    shm.close()
+    # shm.close()
 
     return img_indexes, successes, footprints
 
