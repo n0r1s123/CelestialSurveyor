@@ -3,35 +3,34 @@ import os
 import uuid
 import numpy as np
 
-from multiprocessing.shared_memory import SharedMemory
 from typing import Optional, Union, Tuple
-from astropy import units as u
-import twirl
 from astropy.wcs import WCS
 from logger.logger import get_logger
 
-from backend.consuming_functions import (load_headers, load_image, align_images, load_images, stretch_images,
-                                         PIXEL_TYPE, SECONDARY_ALIGNMENT_OFFSET, plate_solve, align_images_wcs,
-                                         plate_solve_image)
+from backend.consuming_functions.load_headers import load_headers
+from backend.consuming_functions.load_images import load_images, PIXEL_TYPE, load_image
+from backend.consuming_functions.plate_solve_images import plate_solve, plate_solve_image
+from backend.consuming_functions.align_images import align_images_wcs
+from backend.consuming_functions.stretch_images import stretch_images
 from backend.data_classes import SharedMemoryParams
 from backend.progress_bar import ProgressBarCli, AbstractProgressBar
 from backend.data_classes import Header
 import requests
 from backend.known_object import KnownObject
+from threading import Event
+from backend.consuming_functions.measure_execution_time import measure_execution_time
 
 
 logger = get_logger()
 
 
 CHUNK_SIZE = 64
+# TMP_FOLDER = os.ro
 
 
 class SourceDataV2:
-    def __init__(self, file_list: list[str], to_debayer: bool = False) -> None:
-        file_list = [item for item in file_list if item.lower().endswith(".xisf") or item.lower().endswith(".fit") or
-                     item.lower().endswith(".fits")]
-        self.headers = load_headers(file_list, progress_bar=ProgressBarCli())
-        self.headers.sort(key=lambda header: header.timestamp)
+    def __init__(self, to_debayer: bool = False) -> None:
+        self.headers = []
         self.original_frames = None
         self.shm = None
         self.shm_name = uuid.uuid4().hex + ".np"
@@ -40,19 +39,39 @@ class SourceDataV2:
         self.to_debayer = to_debayer
         self.y_borders: slice = slice(None, None)
         self.x_borders: slice = slice(None, None)
-        self.usage_map = np.ones(len(self.headers), dtype=bool)
+        self.__usage_map = None
         self.__chunk_len: int = 0
         self.__wcs: Optional[WCS] = None
         self.__cropped = False
         self.__shared = True
         self.__images = None
+        self.__stop_event = Event()
+        self.__used_images = None
+        self.__usage_map_changed = True
 
-    def extend_headers(self, file_list: list[str]) -> None:
-        self.headers.extend(load_headers(file_list))
+    def raise_stop_event(self):
+        self.__stop_event.set()
+
+    def clear_stop_event(self):
+        self.__stop_event.clear()
+
+    @property
+    def stop_event(self):
+        return self.__stop_event
+
+    @staticmethod
+    def filter_file_list(file_list: list[str]) -> list[str]:
+        return [item for item in file_list if item.lower().endswith(".xisf") or item.lower().endswith(".fit")
+                or item.lower().endswith(".fits")]
+
+    def extend_headers(self, file_list: list[str], progress_bar: Optional[AbstractProgressBar] = None) -> None:
+        file_list = self.filter_file_list(file_list)
+        self.headers.extend(load_headers(file_list, progress_bar, stop_event=self.stop_event))
         self.headers.sort(key=lambda header: header.timestamp)
 
-    def reload_headers(self, file_list: list[str]) -> None:
-        self.headers = load_headers(file_list)
+    def reload_headers(self, file_list: list[str], progress_bar: Optional[AbstractProgressBar] = None) -> None:
+        file_list = self.filter_file_list(file_list)
+        self.headers = load_headers(file_list, progress_bar, stop_event=self.stop_event)
         self.headers.sort(key=lambda header: header.timestamp)
 
     def set_headers(self, headers: list[Header]) -> None:
@@ -76,16 +95,31 @@ class SourceDataV2:
         return self.original_frames.shape
 
     @property
+    def usage_map(self):
+        if self.__usage_map is None:
+            self.__usage_map = np.ones((len(self.__images), ), dtype=bool)
+        return self.__usage_map
+
+    @usage_map.setter
+    def usage_map(self, usage_map):
+        self.__usage_map = usage_map
+        self.__usage_map_changed = True
+
+    @property
     def images(self):
-        if self.__shared and self.__images is None:
-            return self.original_frames[self.usage_map, self.y_borders, self.x_borders]
+        if self.__shared:
+            usage_map = self.__usage_map if self.__usage_map is not None else np.ones((len(self.headers), ), dtype=bool)
+            return self.original_frames[usage_map, self.y_borders, self.x_borders] if self.original_frames is not None else None
         else:
-            return self.__images
+            if self.__usage_map_changed:
+                self.__used_images = self.__images[self.usage_map]
+                self.__usage_map_changed = False
+            return self.__used_images
 
     def images_from_buffer(self):
-        # images = np.copy(self.images)
-        images = np.zeros(self.images.shape, dtype=PIXEL_TYPE)
-        np.copyto(images, self.images)
+        self.__images = np.copy(self.images)
+        # images = np.zeros(self.images.shape, dtype=PIXEL_TYPE)
+        # np.copyto(images, self.images)
         name = self.shm_name
         self.original_frames._mmap.close()
         del self.original_frames
@@ -93,8 +127,8 @@ class SourceDataV2:
         os.remove(name)
         self.__original_frames = None
         self.__shared = False
-        self.__images = images
-        print(type(self.images))
+        # self.__images = images
+        # print(type(self.images))
 
     @property
     def max_image(self):
@@ -115,12 +149,11 @@ class SourceDataV2:
         file_list = [header.file_name for header in self.headers]
         img = load_image(file_list[0])
         shape = (len(file_list), *img.shape)
-        # self.shm = SharedMemory(name=self.shm_name, create=True, size=img.nbytes * len(file_list))
         self.shm_params = SharedMemoryParams(
             shm_name=self.shm_name, shm_shape=shape, shm_size=img.nbytes * len(file_list), shm_dtype=img.dtype)
-        # self.original_frames = np.ndarray(shape=shape, dtype=img.dtype, buffer=self.shm.buf)
         self.original_frames = np.memmap(self.shm_name, dtype=PIXEL_TYPE, mode='w+', shape=shape)
-        load_images(file_list, self.shm_params, to_debayer=self.to_debayer, progress_bar=progress_bar)
+        self.__shared = True
+        load_images(file_list, self.shm_params, to_debayer=self.to_debayer, progress_bar=progress_bar, stop_event=self.stop_event)
 
     @staticmethod
     def calculate_raw_crop(footprint: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]]:
@@ -220,44 +253,30 @@ class SourceDataV2:
         crop = (y_top, y_bottom), (x_left, x_right)
         return crop
 
-    def align_images(self, progress_bar: Optional[AbstractProgressBar] = None) -> None:
-        logger.log.info("Aligning images...")
-        success_map, self.footprint_map = align_images(self.shm_params, progress_bar=progress_bar)
-        # First image is always used
-        self.usage_map = [True]
-        self.usage_map.extend(success_map)
-        self.usage_map = np.array(self.usage_map)
-
     def align_images_wcs(self, progress_bar: Optional[AbstractProgressBar] = None) -> None:
         logger.log.info("Aligning images...")
         success_map, self.footprint_map = align_images_wcs(
-            self.shm_params, [header.wcs for header in self.headers], progress_bar=progress_bar)
-        # First image is always used
-        self.usage_map = success_map
+            self.shm_params,
+            [header.wcs for header in self.headers],
+            progress_bar=progress_bar,
+            stop_event=self.stop_event)
+        self.__usage_map = success_map
 
     def crop_images(self):
         logger.log.info("Cropping images...")
         x_borders, y_borders = [], []
         if self.footprint_map is None:
-            footprint_map = self.original_frames[self.usage_map] == 0
+            print(self.original_frames.shape)
+            footprint_map = self.original_frames[self.__usage_map] == 0
+            footprint_map = footprint_map[0]
+            print(footprint_map.shape)
             if len(footprint_map.shape) == 4:
                 footprint_map = np.reshape(footprint_map, footprint_map.shape[:-1])
         else:
-            print(len(self.footprint_map))
-            print(len(self.usage_map))
-            footprint_map = self.footprint_map[np.array(self.usage_map, dtype=bool)]
-            import cv2
-            for header, item in zip(self.headers, footprint_map):
-                # item = item.astype("uint8")
-                # item *= 255
-                # cv2.imshow("test", item)
-                # cv2.waitKey(0)
-                print(header.file_name)
-                print(header.wcs.pixel_to_world(self.origional_shape[1]//2, self.original_shape[2]//2))
-
-
-
+            footprint_map = self.footprint_map[np.array(self.__usage_map, dtype=bool)]
         for item in footprint_map:
+            if self.stop_event.is_set():
+                return
             y_border, x_border = self.calculate_crop(item)
 
             y_borders.append(y_border)
@@ -271,32 +290,32 @@ class SourceDataV2:
         self.footprint_map = None
         self.wcs, _ = self.plate_solve(0)
 
-    def secondary_align_images(self, y_splits: int = 3, x_splits: int = 3,
-                               progress_bar: Optional[AbstractProgressBar] = None) -> None:
-        logger.log.info(f"Secondary aligning images with {y_splits} x {x_splits} splits")
-        y_step = (self.y_borders.stop - SECONDARY_ALIGNMENT_OFFSET - self.y_borders.start -
-                  SECONDARY_ALIGNMENT_OFFSET) // y_splits
-        y_slices = range(self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET,
-                         self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET + y_step * y_splits, y_step)
-        y_slices = [slice(item, item + y_step) for item in y_slices]
-        x_step = (self.x_borders.stop - SECONDARY_ALIGNMENT_OFFSET - self.x_borders.start -
-                  SECONDARY_ALIGNMENT_OFFSET) // x_splits
-        x_slices = range(self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET,
-                         self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET + x_step * x_splits, x_step)
-        x_slices = [slice(item, item + x_step) for item in x_slices]
-        for num_y, y_slice in enumerate(y_slices):
-            for num_x, x_slice in enumerate(x_slices, start=1):
-                progress_bar.clear()
-                logger.log.info(f"Secondary aligning images part {num_y*y_splits + num_x} of {y_splits * x_splits}")
-                shm_params = self.shm_params
-                shm_params.y_slice = y_slice
-                shm_params.x_slice = x_slice
-                align_images(shm_params, progress_bar=progress_bar)
-
-        self.y_borders = slice(self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET,
-                               self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET + y_step * y_splits)
-        self.x_borders = slice(self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET,
-                               self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET + x_step * x_splits)
+    # def secondary_align_images(self, y_splits: int = 3, x_splits: int = 3,
+    #                            progress_bar: Optional[AbstractProgressBar] = None) -> None:
+    #     logger.log.info(f"Secondary aligning images with {y_splits} x {x_splits} splits")
+    #     y_step = (self.y_borders.stop - SECONDARY_ALIGNMENT_OFFSET - self.y_borders.start -
+    #               SECONDARY_ALIGNMENT_OFFSET) // y_splits
+    #     y_slices = range(self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET,
+    #                      self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET + y_step * y_splits, y_step)
+    #     y_slices = [slice(item, item + y_step) for item in y_slices]
+    #     x_step = (self.x_borders.stop - SECONDARY_ALIGNMENT_OFFSET - self.x_borders.start -
+    #               SECONDARY_ALIGNMENT_OFFSET) // x_splits
+    #     x_slices = range(self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET,
+    #                      self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET + x_step * x_splits, x_step)
+    #     x_slices = [slice(item, item + x_step) for item in x_slices]
+    #     for num_y, y_slice in enumerate(y_slices):
+    #         for num_x, x_slice in enumerate(x_slices, start=1):
+    #             progress_bar.clear()
+    #             logger.log.info(f"Secondary aligning images part {num_y*y_splits + num_x} of {y_splits * x_splits}")
+    #             shm_params = self.shm_params
+    #             shm_params.y_slice = y_slice
+    #             shm_params.x_slice = x_slice
+    #             align_images(shm_params, progress_bar=progress_bar)
+    #
+    #     self.y_borders = slice(self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET,
+    #                            self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET + y_step * y_splits)
+    #     self.x_borders = slice(self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET,
+    #                            self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET + x_step * x_splits)
 
     def make_master_dark(self, filenames: list[str], progress_bar: Optional[AbstractProgressBar] = None) -> np.ndarray:
         shape = (len(filenames), *self.origional_shape[1:])
@@ -364,7 +383,6 @@ class SourceDataV2:
         os.remove(flat_shm_name)
         return res
 
-
     def calibrate_images(self, dark_files: Optional[list[str]] = None, flat_files: Optional[list[str]] = None,
                          dark_flat_files: Optional[list[str]] = None, progress_bar: Optional[AbstractProgressBar] = None
                          ) -> None:
@@ -380,7 +398,7 @@ class SourceDataV2:
         shm_params = self.shm_params
         shm_params.y_slice = self.y_borders
         shm_params.x_slice = self.x_borders
-        stretch_images(self.shm_params, progress_bar=progress_bar)
+        stretch_images(self.shm_params, progress_bar=progress_bar, stop_event=self.stop_event)
 
     def get_number_of_chunks(self, size: tuple[int, int] = (CHUNK_SIZE, CHUNK_SIZE), overlap=0.5) -> tuple[np.ndarray, np.ndarray]:
         size_y, size_x = size
@@ -390,27 +408,19 @@ class SourceDataV2:
         xs[-1] = self.shape[2] - size_x
         return ys, xs
 
-    def generate_image_chunks(self, size: tuple[int, int] = (CHUNK_SIZE, CHUNK_SIZE), overlap=0.5, usage_mask: Optional[np.ndarray] = None):
-        if usage_mask is None:
-            usage_mask = np.ones(len(self.images), dtype=bool)
+    def generate_image_chunks(self, size: tuple[int, int] = (CHUNK_SIZE, CHUNK_SIZE), overlap=0.5):
         size_y, size_x = size
         ys, xs = self.get_number_of_chunks(size, overlap)
         coordinates = ((y, x) for y in ys for x in xs)
         for y, x in coordinates:
             y, x = int(y), int(x)
-            imgs = self.images[usage_mask][:, y:y + size_y, x:x + size_x]
-            # slow_images = []
-            # for i in range(len(imgs)):
-            #     if i % 4 == 0:
-            #         slow_images.append(np.average(imgs[i:i + 4], axis=0))
-            # slow_images = np.array(slow_images)
-            # yield (y, x), self.prepare_images(np.copy(imgs)), self.prepare_images(slow_images)
-            yield (y, x), self.prepare_images(imgs)
+            imgs = np.copy(self.images[:, y:y + size_y, x:x + size_x])
+            yield (y, x), self.prepare_images(np.copy(imgs))
 
     def generate_batch(self, chunk_generator, batch_size: int):
         batch = []
         coords = []
-        slow_batch = []
+        # slow_batch = []
         # for coord, chunk, slow_chunk in chunk_generator:
         for coord, chunk in chunk_generator:
             batch.append(chunk)
@@ -421,12 +431,11 @@ class SourceDataV2:
                 yield coords, np.array(batch)
                 batch = []
                 coords = []
-                slow_batch = []
+                # slow_batch = []
         if len(batch) > 0:
             # return last portion of chunks. last batch may be less than batch_size
             # yield coords, np.array(batch), np.array(slow_batch)
             yield coords, np.array(batch)
-
 
     @staticmethod
     def estimate_image_noize_level(imgs):
@@ -474,7 +483,6 @@ class SourceDataV2:
         return [os.path.join(folder, item) for item in os.listdir(folder) if item.lower().endswith(
             ".xisf") or item.lower().endswith(".fit") or item.lower().endswith(".fits")]
 
-
     def plate_solve(self, ref_idx: int = 0, sky_coord: Optional[np.ndarray] = None):
         logger.log.info("Plate solving...")
         wcs, sky_coord = plate_solve_image(self.images[ref_idx], header=self.headers[ref_idx], sky_coord=sky_coord)
@@ -482,7 +490,7 @@ class SourceDataV2:
         return wcs, sky_coord
 
     def plate_solve_all(self, progress_bar: Optional[AbstractProgressBar] = None):
-        res = plate_solve(self.shm_params, self.headers, progress_bar=progress_bar)
+        res = plate_solve(self.shm_params, self.headers, progress_bar=progress_bar, stop_event=self.stop_event)
         for wcs, header in zip(res, self.headers):
             header.wcs = wcs
 
@@ -498,7 +506,7 @@ class SourceDataV2:
         hour = f"{minus_substr}{abs(int(dec.d)):02d}"
         return f"{hour}-{abs(int(dec.m)):02d}-{abs(int(dec.s)):02d}"
 
-    def fetch_known_asteroids_for_image(self, img_idx: int):
+    def fetch_known_asteroids_for_image(self, img_idx: int, magnitude_limit: float = 18.0):
         logger.log.debug("Requesting visible targets")
         obs_time = self.headers[img_idx].timestamp
         obs_time = (f"{obs_time.year:04d}-{obs_time.month:02d}-{obs_time.day:02d}_{obs_time.hour:02d}:"
@@ -515,7 +523,7 @@ class SourceDataV2:
         know_comets = []
 
         # TODO: magnitude handling
-        magnitude_limit = 18
+        # magnitude_limit = 19
         for sb_kind in ('a', 'c'):
             params = {
                 "sb-kind": sb_kind,
@@ -525,12 +533,11 @@ class SourceDataV2:
                 "obs-time": obs_time,
                 "mag-required": True,
                 "two-pass": True,
-                "suppress-first-pass": False,
+                "suppress-first-pass": True,
                 "req-elem": False,
                 "vmag-lim": magnitude_limit,
                 "fov-ra-lim": fov_ra_lim,
                 "fov-dec-lim": fov_dec_lim,
-
             }
             logger.log.debug(f"Params: {params}")
             res = requests.get("https://ssd-api.jpl.nasa.gov/sb_ident.api", params)
@@ -542,18 +549,14 @@ class SourceDataV2:
             first_pass_objects = [dict(zip(res["fields_first"], item)) for item in res.get("data_first_pass", [])]
             potential_known_objects.extend([KnownObject(item, wcs=self.wcs) for item in first_pass_objects])
             for item in potential_known_objects:
-                print(item.pixel_coordinates)
                 x, y = item.pixel_coordinates
                 if 0 <= x < self.shape[2] and 0 <= y < self.shape[1]:
-                    print("bla")
                     if sb_kind == 'a':
                         know_asteroids.append(item)
                     if sb_kind == 'c':
                         know_comets.append(item)
 
         return know_asteroids, know_comets
-
-
 
     @staticmethod
     def make_file_list(folder: str) -> list[str]:

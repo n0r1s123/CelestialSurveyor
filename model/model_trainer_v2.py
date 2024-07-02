@@ -32,6 +32,7 @@ if __name__ == "__main__":
         dark_folder: Optional[str] = None
         flat_folder: Optional[str] = None
         dark_flats_folder: Optional[str] = None
+        magnitude_limit: Optional[float] = 18.0
 
         @property
         def file_paths(self):
@@ -59,8 +60,8 @@ if __name__ == "__main__":
     def main():
         logger.log.info(tf.__version__)
         input_shape = (None, 64, 64, 1)
-        load_model_name = "model150"
-        save_model_name = "model151"
+        load_model_name = "model156"
+        save_model_name = "model157"
 
         # Build the model
 
@@ -80,117 +81,190 @@ if __name__ == "__main__":
                 to_align=False,
                 number_of_images=None,
                 to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Seahorse\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=None,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Orion\\Part1\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=None,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Orion\\Part2\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=None,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Orion\\Part3\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=None,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Orion\\Part4\\cropped1',
-                linear=False,
-                to_align=False,
-                number_of_images=None,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\NGC1333_RASA\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=5,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Seahorse\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=7,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Orion\\Part1\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=3,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Orion\\Part2\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=6,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Orion\\Part3\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=7,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Orion\\Part4\\cropped1',
-                linear=False,
-                to_align=False,
-                number_of_images=4,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\M78\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB',
-                linear=True,
-                to_align=False,
-                number_of_images=None,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\M81\\cropped',
-                linear=False,
-                to_align=False,
-                number_of_images=60,
-                to_debayer=False),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Virgo',
-                linear=True,
-                to_align=True,
-                number_of_images=None,
-                to_debayer=True,
-                dark_folder='D:\\git\\dataset\\Virgo\\Dark',
-                flat_folder='D:\\git\\dataset\\Virgo\\Flat',
-                dark_flats_folder='D:\\git\\dataset\\Virgo\\DarkFlat'),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Virgo1',
-                linear=True,
-                to_align=True,
-                number_of_images=None,
-                to_debayer=True,
-                dark_folder='D:\\git\\dataset\\Virgo\\Dark',
-                flat_folder='D:\\git\\dataset\\Virgo\\Flat',
-                dark_flats_folder='D:\\git\\dataset\\Virgo\\DarkFlat'),
-            SourceDataProperties(
-                folder='D:\\git\\dataset\\Virgo2',
-                linear=True,
-                to_align=True,
-                number_of_images=None,
-                to_debayer=True,
-                dark_folder='D:\\git\\dataset\\Virgo\\Dark',
-                flat_folder='D:\\git\\dataset\\Virgo\\Flat',
-                dark_flats_folder='D:\\git\\dataset\\Virgo\\DarkFlat'),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Seahorse\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=None,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Orion\\Part1\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=None,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Orion\\Part2\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=None,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Orion\\Part3\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=None,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Orion\\Part4\\cropped1',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=None,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\NGC1333_RASA\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=5,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Seahorse\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=7,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Orion\\Part1\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=3,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Orion\\Part2\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=6,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Orion\\Part3\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=7,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Orion\\Part4\\cropped1',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=4,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\M78\\Light_BIN-1_EXPOSURE-120.00s_FILTER-NoFilter_RGB',
+            #     linear=True,
+            #     to_align=False,
+            #     number_of_images=None,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\M81\\cropped',
+            #     linear=False,
+            #     to_align=False,
+            #     number_of_images=60,
+            #     to_debayer=False),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Virgo',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='D:\\git\\dataset\\Virgo\\Dark',
+            #     flat_folder='D:\\git\\dataset\\Virgo\\Flat',
+            #     dark_flats_folder='D:\\git\\dataset\\Virgo\\DarkFlat'),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Virgo1',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='D:\\git\\dataset\\Virgo\\Dark',
+            #     flat_folder='D:\\git\\dataset\\Virgo\\Flat',
+            #     dark_flats_folder='D:\\git\\dataset\\Virgo\\DarkFlat'),
+            # SourceDataProperties(
+            #     folder='D:\\git\\dataset\\Virgo2',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='D:\\git\\dataset\\Virgo\\Dark',
+            #     flat_folder='D:\\git\\dataset\\Virgo\\Flat',
+            #     dark_flats_folder='D:\\git\\dataset\\Virgo\\DarkFlat'),
+            # SourceDataProperties(
+            #     folder='E:\\Astro\\Antares2024\\Night_1\\PART1',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='E:\\Astro\\Antares2024\\DARK',
+            #     flat_folder='E:\\Astro\\Antares2024\\Night_1\\FLAT',
+            #     dark_flats_folder='E:\\Astro\\Antares2024\\Night_1\\DARKFLAT',
+            #     magnitude_limit=18.0),
+            # SourceDataProperties(
+            #     folder='E:\\Astro\\Antares2024\\Night_1\\PART2',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='E:\\Astro\\Antares2024\\DARK',
+            #     flat_folder='E:\\Astro\\Antares2024\\Night_1\\FLAT',
+            #     dark_flats_folder='E:\\Astro\\Antares2024\\Night_1\\DARKFLAT',
+            #     magnitude_limit=18.0),
+            # SourceDataProperties(
+            #     folder='E:\\Astro\\Antares2024\\Night_3\\PART1',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='E:\\Astro\\Antares2024\\DARK',
+            #     flat_folder='E:\\Astro\\Antares2024\\Night_1\\FLAT',
+            #     dark_flats_folder='E:\\Astro\\Antares2024\\Night_1\\DARKFLAT',
+            #     magnitude_limit=18.0),
+            # SourceDataProperties(
+            #     folder='E:\\Astro\\Antares2024\\Night_3\\PART2',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='E:\\Astro\\Antares2024\\DARK',
+            #     flat_folder='E:\\Astro\\Antares2024\\Night_1\\FLAT',
+            #     dark_flats_folder='E:\\Astro\\Antares2024\\Night_1\\DARKFLAT',
+            #     magnitude_limit=18.0),
+            # SourceDataProperties(
+            #     folder='E:\\Astro\\Antares2024\\Night_4\\PART1',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='E:\\Astro\\Antares2024\\DARK',
+            #     flat_folder='E:\\Astro\\Antares2024\\Night_1\\FLAT',
+            #     dark_flats_folder='E:\\Astro\\Antares2024\\Night_1\\DARKFLAT',
+            #     magnitude_limit=18.0),
+            # SourceDataProperties(
+            #     folder='E:\\Astro\\Andromeda\\Light',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='E:\\Astro\\Andromeda\\Dark_600',
+            #     flat_folder='E:\\Astro\\Andromeda\\Flat\\Night2',
+            #     dark_flats_folder='E:\\Astro\\Andromeda\\Dark_Flat',
+            #     magnitude_limit=18.0),
+            # SourceDataProperties(
+            #     folder='E:\\Astro\\Rosette\\Light',
+            #     linear=True,
+            #     to_align=True,
+            #     number_of_images=None,
+            #     to_debayer=True,
+            #     dark_folder='E:\\Astro\\Rosette\\Dark',
+            #     flat_folder='E:\\Astro\\Rosette\\Flat',
+            #     dark_flats_folder='E:\\Astro\\Rosette\\DarkFlat',
+            #     magnitude_limit=19.0),
         ]
 
         source_datas = []
         for num, properties in enumerate(source_data_properties):
             logger.log.info(f"Processing {num+1} of {len(source_data_properties)} source datas")
-            source_data = TrainingSourceDataV2(properties.file_paths, properties.to_debayer, properties.number_of_images)
+            source_data = TrainingSourceDataV2(properties.to_debayer)
+            source_data.extend_headers(file_list=properties.file_paths)
+            if properties.number_of_images is not None:
+                source_data.headers = source_data.headers[:properties.number_of_images]
             source_data.load_images(progress_bar=ProgressBarCli())
             logger.log.info(f"dtype = {source_data.original_frames.dtype}")
             source_data.calibrate_images(properties.dark_paths, properties.flat_paths, properties.dark_flat_paths,
@@ -200,8 +274,9 @@ if __name__ == "__main__":
                 source_data.align_images_wcs(progress_bar=ProgressBarCli())
 
             # TODO: Crop images if alignment is not required
-            source_data.crop_images()
+            # print(source_data.images.shape)
 
+            source_data.crop_images()
             if properties.linear:
                 source_data.stretch_images(progress_bar=ProgressBarCli())
             source_data.load_exclusion_boxes()
@@ -221,7 +296,7 @@ if __name__ == "__main__":
         early_stopping_monitor = tf.keras.callbacks.EarlyStopping(
             monitor='val_loss',
             min_delta=0,
-            patience=100,
+            patience=15,
             verbose=1,
             mode='min',
             baseline=None,
@@ -244,7 +319,4 @@ if __name__ == "__main__":
         model.save(f"{save_model_name}.h5")
         encrypt_model(save_model_name)
 
-
-
     main()
-

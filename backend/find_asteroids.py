@@ -1,27 +1,17 @@
+from cryptography.fernet import Fernet
+import cv2
 import datetime
-import os
+import h5py
+from io import BytesIO
 import numpy as np
-import wx
+import os
+from PIL import Image
+import tensorflow as tf
 from typing import Optional
 
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')
-from matplotlib.patches import Rectangle
-import cv2
-
-from cryptography.fernet import Fernet
-from io import BytesIO
-import h5py
-import tensorflow as tf
-from PIL import Image
-
-# from .source_data import SourceData, stretch_image
 from backend.source_data_v2 import SourceDataV2, CHUNK_SIZE
 from .progress_bar import AbstractProgressBar
-
 from logger.logger import get_logger
-from threading import Event
 
 
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
@@ -31,16 +21,14 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 logger = get_logger()
 
 
-def predict_asteroids(source_data: SourceDataV2, use_img_mask,
-                      progress_bar: Optional[AbstractProgressBar] = None, model_path="default"):
-    if use_img_mask is None:
-        use_img_mask = [True for _ in range(len(source_data.images))]
+def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[AbstractProgressBar] = None,
+                      model_path: Optional[str] = None):
 
-    model_path = get_model_path() if model_path == "default" else model_path
+    model_path = get_model_path() if model_path is None else model_path
     logger.log.info(f"Loading model: {model_path}")
     model = decrypt_model(model_path)
     batch_size = 10
-    chunk_generator = source_data.generate_image_chunks(usage_mask=use_img_mask)
+    chunk_generator = source_data.generate_image_chunks()
     batch_generator = source_data.generate_batch(chunk_generator, batch_size=batch_size)
     ys, xs = source_data.get_number_of_chunks()
     progress_bar_len = len(ys) * len(xs)
@@ -49,6 +37,8 @@ def predict_asteroids(source_data: SourceDataV2, use_img_mask,
         progress_bar.set_total(progress_bar_len)
     objects_coords = []
     for coords, batch in batch_generator:
+        if source_data.stop_event.is_set():
+            break
         results = model.predict(batch, verbose=0)
         for res, (y, x) in zip(results, coords):
             if res > 0.8:
@@ -59,26 +49,17 @@ def predict_asteroids(source_data: SourceDataV2, use_img_mask,
     return objects_coords
 
 
-def save_results(source_data: SourceDataV2, results, output_folder, use_img_mask=None):
-    if use_img_mask is None:
-        use_img_mask = [True for _ in range(len(source_data.images))]
-    max_image = source_data.max_image
-    dpi = 80
-    height, width = max_image.shape[:2]
-    figsize = width / float(dpi), height / float(dpi)
-    fig = plt.figure(figsize=figsize, dpi=dpi)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.imshow(max_image, cmap='gray')
+def save_results(source_data: SourceDataV2, results, output_folder):
+    max_image = np.copy(source_data.max_image) * 255.
+    max_image = cv2.cvtColor(max_image, cv2.COLOR_GRAY2BGR)
     gif_size = 5
     processed = []
     for coord_num, (y, x, probability) in enumerate(results):
         probability = probability[0]
-        color = "yellow" if probability <= 0.9 else "green"
-        plt.gca().add_patch(Rectangle((x, y), 64, 64,
-                                      edgecolor=color,
-                                      facecolor='none',
-                                      lw=2))
-        plt.text(x, y - 10, "{:.2f}".format(probability), color="red", fontsize=15)
+        color = (0, 255, 255) if probability <= 0.9 else (0, 255, 0)
+        max_image = cv2.rectangle(max_image, (x, y), (x+CHUNK_SIZE, y+CHUNK_SIZE), color, 2)
+        max_image = cv2.putText(max_image, "{:.2f}".format(probability), org=(x, y - 10),
+                            fontFace=1, fontScale=1, color=(0, 0, 255), thickness=0)
         for y_pr, x_pr in processed:
             if x_pr - (gif_size // 2) * 64 <= x <= x_pr + (gif_size // 2) * 64 and \
                     y_pr - (gif_size // 2) * 64 <= y <= y_pr + (gif_size // 2) * 64:
@@ -86,26 +67,19 @@ def save_results(source_data: SourceDataV2, results, output_folder, use_img_mask
         else:
             processed.append((y, x))
             y_new, x_new, size = get_big_rectangle_coords(y, x, max_image.shape, gif_size)
-            plt.gca().add_patch(Rectangle((x_new, y_new), size, size,
-                                          edgecolor='red',
-                                          facecolor='none',
-                                          lw=4))
-            plt.text(x_new + 45, y_new + 60, str(len(processed)), color="red", fontsize=40)
+            max_image = cv2.rectangle(max_image, (x_new, y_new), (x_new + size, y_new + size), (0, 0, 255), 4)
+            max_image = cv2.putText(max_image, str(len(processed)), org=(x_new + 20, y_new + 60),
+                            fontFace=1, fontScale=3, color=(0, 0, 255), thickness=2)
             frames = source_data.crop_image(
                 source_data.images,
                 (y_new, y_new + size),
-                (x_new, x_new + size),
-                usage_mask=use_img_mask)
+                (x_new, x_new + size))
             frames = frames * 255
             new_shape = list(frames.shape)
             new_shape[1] += 20
             new_frames = np.zeros(new_shape)
             new_frames[:, :-20, :] = frames
-            used_timestamps = []
-            for is_used, header in zip(use_img_mask, source_data.headers):
-                if is_used:
-                    used_timestamps.append(header.timestamp)
-
+            used_timestamps = [item.timestamp for item in source_data.headers]
             for frame, original_ts in zip(new_frames, used_timestamps):
                 cv2.putText(frame, text=original_ts.strftime("%d/%m/%Y %H:%M:%S %Z"), org=(70, 64 * gif_size + 16),
                             fontFace=1, fontScale=1, color=(255, 255, 255), thickness=0)
@@ -116,14 +90,11 @@ def save_results(source_data: SourceDataV2, results, output_folder, use_img_mask
                 append_images=new_frames[1:],
                 duration=200,
                 loop=0)
-
-    not_annotated = plt
-
-    plt.savefig(os.path.join(output_folder, f"results.png"))
-    return not_annotated
+    cv2.imwrite(os.path.join(output_folder, "results.png"), max_image)
+    return max_image
 
 
-def annotate_results(source_data: SourceDataV2, plot: plt, output_folder: str):
+def annotate_results(source_data: SourceDataV2, img_to_be_annotated: np.ndarray, output_folder: str, magnitude_limit: float):
     start_session_frame_nums = [0]
 
     start_ts = source_data.headers[0].timestamp
@@ -132,7 +103,7 @@ def annotate_results(source_data: SourceDataV2, plot: plt, output_folder: str):
             start_session_frame_nums.append(num)
             start_ts = header.timestamp
     for start_frame_num in start_session_frame_nums:
-        for obj_type in source_data.fetch_known_asteroids_for_image(start_frame_num):
+        for obj_type in source_data.fetch_known_asteroids_for_image(start_frame_num, magnitude_limit=magnitude_limit):
             for item in obj_type:
                 print(f"Known object: {item.name}")
                 target_x, target_y = item.pixel_coordinates
@@ -143,7 +114,9 @@ def annotate_results(source_data: SourceDataV2, plot: plt, output_folder: str):
                     y = (target_y + 4, target_y + 14)
                 else:
                     y = (target_y - 4, target_y - 14)
-                plot.plot(x, y, color="orange", linewidth=2)
+                img_to_be_annotated =cv2.line(
+                    img_to_be_annotated, (x[0], y[0]), (x[1], y[1]), (0, 165, 255), 2)
+                # plot.plot(x, y, color="orange", linewidth=2)
 
                 if target_y < 50:
                     text_y = target_y + 20 + 20
@@ -154,13 +127,10 @@ def annotate_results(source_data: SourceDataV2, plot: plt, output_folder: str):
                     text_x = target_x - 300
                 else:
                     text_x = target_x
-                plot.text(text_x, text_y, f"{item.name}: {item.magnitude}", color="orange", fontsize=20)
-    #
-    # plt.axis('off')
-    plot.savefig(os.path.join(output_folder, f"results_annotated.png"))
-    # logger.log.info(f"Calculations are finished. Check results folder: {output_folder}")
-    # if ui_frame:
-    #     wx.CallAfter(ui_frame.on_process_finished)
+                img_to_be_annotated = cv2.putText(img_to_be_annotated, f"{item.name}: {item.magnitude}", org=(text_x, text_y),
+                                        fontFace=0, fontScale=1, color=(0, 165, 255), thickness=2)
+
+    cv2.imwrite(os.path.join(output_folder, "results_annotated.png"), img_to_be_annotated)
 
 
 # Decrypt the model weights

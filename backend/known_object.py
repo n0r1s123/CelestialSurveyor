@@ -13,6 +13,7 @@ class KnownObject:
         )
         self.magnitude = float(properties["Visual magnitude (V)"])
         self._wcs = wcs
+        self.__pixel_coordinates = None
 
     def __str__(self):
         return f"{self.name} {self.magnitude}\n{self.coordinates}"
@@ -29,7 +30,7 @@ class KnownObject:
     def pixel_coordinates(self):
         if not isinstance(self._wcs, WCS):
             raise ValueError("WCS is not specified or is not an instance of class WCS")
-        return self.wcs.world_to_pixel(self.coordinates)
+        return self.wcs.world_to_pixel(self.coordinates) if self.__pixel_coordinates is None else self.__pixel_coordinates
 
 
 if __name__ == '__main__':

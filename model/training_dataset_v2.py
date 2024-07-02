@@ -11,7 +11,8 @@ from dataclasses import dataclass
 import datetime
 from bs4 import BeautifulSoup
 from typing import Optional
-from backend.consuming_functions import measure_execution_time
+import cv2
+import json
 
 from backend.source_data_v2 import SourceDataV2, CHUNK_SIZE
 
@@ -37,9 +38,11 @@ class RandomObject:
 class TrainingSourceDataV2(SourceDataV2):
     SAMPLES_FOLDER = os.path.join(sys.path[1], "star_samples")
 
-    def __init__(self, file_list: list[str], to_debayer: bool = False, number_of_images: Optional[int] = None) -> None:
-        file_list = file_list[:number_of_images]
-        super().__init__(file_list, to_debayer)
+    def __init__(self, to_debayer: bool = False, number_of_images: Optional[int] = None) -> None:
+        # file_list = file_list[:number_of_images]
+
+        super().__init__(to_debayer)
+        self.number_of_images = number_of_images
         self.exclusion_boxes = []
         logger.log.info("Loading star samples")
         self.star_samples = self._load_star_samples()
@@ -57,38 +60,72 @@ class TrainingSourceDataV2(SourceDataV2):
         folders = {os.path.dirname(header.file_name) for header in self.headers}
         exclusion_boxes_files = []
         for folder in folders:
-            if "annotations.xml" in os.listdir(folder):
-                exclusion_boxes_files.append(os.path.join(folder, "annotations.xml"))
+            if "exclusion_boxes.json" in os.listdir(folder):
+                exclusion_boxes_files.append(os.path.join(folder, "exclusion_boxes.json"))
         return exclusion_boxes_files
 
-    def load_exclusion_boxes(self):
-        # Reading data from the xml file
-        img_shape = self.shape[1:]
+    def load_exclusion_boxes(self, force_rebuild: bool = False, magnitude_limit: float = 18.0):
         all_boxes = []
+        file_paths = self.__get_exclusion_boxes_paths()
+        if len(file_paths) > 0 and not force_rebuild:
+            logger.log.info("Loading exclusion boxes...")
+            for fp in file_paths:
+                with open(fp, 'r') as fileo:
+                    exclusion_boxes = json.load(fileo)
+                    all_boxes.extend(exclusion_boxes)
+            all_boxes = np.array(all_boxes)
+            self.exclusion_boxes = all_boxes
+        else:
+            logger.log.info("Making exclusion boxes...")
+            self.make_exclusion_boxes(magnitude_limit=magnitude_limit)
+        # self.show_exclusion_boxes()
 
-        for fp in self.__get_exclusion_boxes_paths():
-            with open(fp, 'r') as f:
-                data = f.read()
-            bs_data = BeautifulSoup(data, 'xml')
-            boxes = []
-            width = float(bs_data.find('image').get("width"))
-            height = float(bs_data.find('image').get("height"))
-            if img_shape is None:
-                x_mult, y_mult = 1, 1
-            else:
-                y_shape, x_shape, *_ = img_shape
-                y_mult = y_shape / height
-                x_mult = x_shape / width
+    def make_exclusion_boxes(self, magnitude_limit: float = 18.0):
+        start_session_idx = 0
+        session_timestamps = []
+        exclusion_boxes = []
+        for num, header in enumerate(self.headers):
+            if header.timestamp - self.headers[start_session_idx].timestamp > datetime.timedelta(hours=14):
+                session_timestamps.append((start_session_idx, num - 1))
+                start_session_idx = num
+        else:
+            session_timestamps.append((start_session_idx, len(self.headers) - 1))
 
-            for tag in bs_data.find_all('box', {'label': 'Asteroid'}):
-                xtl = round(float(tag.get("xtl")) * x_mult) - 100
-                ytl = round(float(tag.get("ytl")) * y_mult) - 100
-                xbr = round(float(tag.get("xbr")) * x_mult) + 100
-                ybr = round(float(tag.get("ybr")) * y_mult) + 100
-                boxes.append((xtl, ytl, xbr, ybr))
+        for start, end in session_timestamps:
+            start_asteroids, start_comets = self.fetch_known_asteroids_for_image(start, magnitude_limit=magnitude_limit)
+            end_asteroids, end_comets = self.fetch_known_asteroids_for_image(end, magnitude_limit=magnitude_limit)
+            start_objects = start_asteroids + start_comets
+            end_objects = end_asteroids + end_comets
+            for start_object in start_objects:
+                for end_object in end_objects:
+                    if start_object.name == end_object.name:
+                        start_x, start_y = start_object.pixel_coordinates
+                        end_x, end_y = end_object.pixel_coordinates
+                        start_x = int(start_x)
+                        start_y = int(start_y)
+                        end_x = int(end_x)
+                        end_y = int(end_y)
+                        exclusion_boxes.append((
+                            max(min(start_x, end_x) - 50, 0),
+                            max(min(start_y, end_y) - 50, 0),
+                            min(max(start_x, end_x) + 50, self.shape[2] - 1),
+                            min(max(start_y, end_y) + 50, self.shape[1] - 1),
+                        ))
+        folder = os.path.dirname(self.headers[0].file_name)
+        file_name = os.path.join(folder, "exclusion_boxes.json")
+        with open(file_name, 'w') as fileo:
+            json.dump(exclusion_boxes, fileo)
+        exclusion_boxes = np.array(exclusion_boxes)
+        self.exclusion_boxes = exclusion_boxes
 
-            all_boxes.extend(boxes)
-        self.exclusion_boxes = np.array(all_boxes)
+    def show_exclusion_boxes(self):
+        max_image = np.copy(self.max_image)
+        max_image = cv2.cvtColor(max_image, cv2.COLOR_GRAY2BGR)
+        for xlt, ylt, xbr, ybr in self.exclusion_boxes:
+            max_image = cv2.rectangle(max_image, (xlt, ylt), (xbr, ybr), (255, 0, 0), 3)
+        small = cv2.resize(max_image, (0, 0), fx=0.4, fy=0.4)
+        cv2.imshow("lalala", small)
+        cv2.waitKey(0)
 
     def get_random_shrink(self) -> np.ndarray:
         generated = False
@@ -193,7 +230,7 @@ class TrainingSourceDataV2(SourceDataV2):
         start_x = random.randrange(0, CHUNK_SIZE)
         start_frame_idx = random.randrange(0, len(self.images))
         timestamps, exposure = self.generate_timestamps()
-        brightness_above_noize = float(random.randrange(500, 1001)) / 1000
+        brightness_above_noize = float(random.randrange(300, 1001)) / 1000
         star_sample = random.choice(self.star_samples)
         total_time = (timestamps[-1] - timestamps[0]).total_seconds()
         total_time /= 3600
@@ -316,17 +353,43 @@ class TrainingSourceDataV2(SourceDataV2):
     @staticmethod
     def draw_hot_pixels(imgs, dead=False):
         imgs = np.copy(imgs)
-        probablity = 20
+        probablity = random.randrange(30, 81)
+        brightness = random.randrange(90, 101) / 100.
         result = []
         for img in imgs:
             if random.randrange(1, 101) < probablity:
                 y_shape, x_shape = imgs[0].shape[:2]
                 y = random.randint(0, y_shape - 1)
                 x = random.randint(0, x_shape - 1)
-                img[y, x] = 0 if dead else random.randrange(50, 101) / 100.
+                img[y, x] = 0 if dead else brightness
             result.append(img)
         result = np.array(result)
         return result
+
+    def draw_hot_stars(self, imgs):
+        imgs = np.copy(imgs)
+        probablity = random.randrange(30, 81)
+        brightness = random.randrange(80, 101) / 100.
+        star_img = random.choice(self.star_samples)
+        star_img *= brightness / np.amax(star_img)
+        result = []
+        for img in imgs:
+            if random.randrange(1, 101) < probablity:
+                y_shape, x_shape = imgs[0].shape[:2]
+                y = random.randint(0, y_shape - 1)
+                x = random.randint(0, x_shape - 1)
+                # img[y, x] = 0 if dead else brightness
+                img = self.insert_star_by_coords(img, star_img, (y, x))
+            result.append(img)
+        result = np.array(result)
+        return result
+
+    # @property
+    # def images(self):
+    #     if self.__shared:
+    #         return self.original_frames[:, self.y_borders, self.x_borders] if self.original_frames is not None else None
+    #     else:
+    #         return self.__images
 
 
 class TrainingDatasetV2:
@@ -335,7 +398,7 @@ class TrainingDatasetV2:
 
     def make_series(self, source_data):
         rand_obg = source_data.generate_random_objects()
-        if random.randint(1, 101) > 50:
+        if random.randint(1, 101) > 60:
             what_to_draw = random.randrange(0, 100)
             if what_to_draw < 200:
                 imgs, res = source_data.draw_object_on_image_series_numpy(rand_obg)
@@ -346,10 +409,13 @@ class TrainingDatasetV2:
             res = 0
             imgs = source_data.get_random_shrink()
 
-        if random.randint(0, 100) >= 80:
+        if random.randint(0, 100) >= 10:
             imgs = source_data.draw_one_image_artefact(imgs)
-        if random.randint(0, 100) >= 70:
-            imgs = source_data.draw_hot_pixels(imgs, bool(random.randrange(0, 2)))
+        if random.randint(0, 100) >= 10:
+            if random.randint(0, 100) >= 50:
+                imgs = source_data.draw_hot_stars(imgs)
+            else:
+                imgs = source_data.draw_hot_pixels(imgs, bool(random.randrange(0, 2)))
 
         imgs = source_data.prepare_images(imgs)
         imgs, timestamps = source_data.adjust_chunks_to_min_len(imgs, rand_obg.timestamps, min_len=5)

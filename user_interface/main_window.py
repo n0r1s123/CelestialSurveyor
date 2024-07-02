@@ -89,9 +89,10 @@ class ImagePanel(scrolled.ScrolledPanel):
 
 
 class ProgressFrame(wx.Frame):
-    def __init__(self, parent, title):
+    def __init__(self, parent, title, stop_event: Event):
         super().__init__(parent=parent, title=title, size=(500, 200))
         self.parent = parent
+        self.stop_event = stop_event
         panel = wx.Panel(self)
         self.label = wx.StaticText(panel, label="Working...")
         self.progress = wx.Gauge(panel, range=100, size=(450, 30))
@@ -105,11 +106,7 @@ class ProgressFrame(wx.Frame):
 
     def on_cancel(self, event):
         self.label.SetLabel("Stopping...")
-        if self.parent.source_data.load_processes:
-            while any(item.pid is None for item in self.parent.source_data.load_processes):
-                time.sleep(0.1)
-        self.parent.stop_event.set()
-        self.Close()
+        self.stop_event.set()
 
 
 class MyFrame(wx.Frame):
@@ -117,7 +114,6 @@ class MyFrame(wx.Frame):
         super(MyFrame, self).__init__(*args, **kw)
 
         self.source_data: SourceDataV2 = None
-        self
 
         # Create the main panel
         self.panel = wx.Panel(self)
@@ -147,18 +143,12 @@ class MyFrame(wx.Frame):
         self.btn_load_files = wx.Button(self.panel, label="Load files")
 
         self.Bind(wx.EVT_BUTTON, self.on_load_files, self.btn_load_files)
-        choices = [str(i) for i in range(1, 11)]
-        self.chk_to_second_align = wx.CheckBox(self.panel, label="Secondary alignment")
-        self.chk_to_second_align.SetValue(True)
-        label1 = wx.StaticText(self.panel, label="Select number of X splits for secondary alignment")
-        self.choice_x_splits = wx.Choice(self.panel, choices=choices)
-        self.choice_x_splits.SetStringSelection("3")
-        label2 = wx.StaticText(self.panel, label="Select number of Y splits for secondary alignment")
-        self.choice_y_splits = wx.Choice(self.panel, choices=choices)
-        self.choice_y_splits.SetStringSelection("3")
-        label3 = wx.StaticText(self.panel, label="Select folder to store results")
+        self.results_label = wx.StaticText(self.panel, label="Select folder to store results")
         self.results_path_picker = wx.DirPickerCtrl(self.panel, style=wx.DIRP_USE_TEXTCTRL)
-
+        self.magnitude_label = wx.StaticText(self.panel, label="Annotation magnitude limit")
+        self.magnitude_input = wx.TextCtrl(self.panel)
+        self.magnitude_input.SetValue("18.0")
+        self.magnitude_input.Bind(wx.EVT_TEXT, self.on_text_change)
         self.btn_process = wx.Button(self.panel, label="Process")
         self.Bind(wx.EVT_BUTTON, self.on_process, self.btn_process)
         self.btn_start_again = wx.Button(self.panel, label="Start again")
@@ -176,7 +166,10 @@ class MyFrame(wx.Frame):
         controls_sizer.Add(self.chk_to_align, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.chk_non_linear, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.btn_load_files, 0, wx.EXPAND | wx.ALL, 5)
+        controls_sizer.Add(self.results_label, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.results_path_picker, 0, wx.EXPAND | wx.ALL, 5)
+        controls_sizer.Add(self.magnitude_label, 0, wx.EXPAND | wx.ALL, 5)
+        controls_sizer.Add(self.magnitude_input, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.btn_process, 0, wx.EXPAND | wx.ALL, 5)
         controls_sizer.Add(self.btn_start_again, 0, wx.EXPAND | wx.ALL, 5)
 
@@ -230,6 +223,15 @@ class MyFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.OnExit, id=wx.ID_EXIT)
         logger.log.info("App initialized")
 
+    def on_text_change(self, event):
+        input_value = self.magnitude_input.GetValue()
+        try:
+            float_value = float(input_value)
+            if float_value > 25:
+                wx.MessageBox("Input value must be less than 25", "Error", wx.OK | wx.ICON_ERROR)
+        except ValueError:
+            wx.MessageBox("Input value must be a float", "Error", wx.OK | wx.ICON_ERROR)
+
     def __get_previous_settings(self):
         settings_file = "settings.json"
         if os.path.exists(settings_file):
@@ -245,16 +247,22 @@ class MyFrame(wx.Frame):
     def set_startup_states(self):
         prev_settings = self.__get_previous_settings()
         dark_path = prev_settings.get('dark_path', '')
+        dark_path = "" if dark_path is None else dark_path
         self.dark_path_picker.SetPath(dark_path)
         flat_path = prev_settings.get('flat_path', '')
+        flat_path = "" if flat_path is None else flat_path
         self.flat_path_picker.SetPath(flat_path)
         dark_flat_path = prev_settings.get('dark_flat_path', '')
+        dark_flat_path = "" if dark_flat_path is None else dark_flat_path
         self.dark_flat_path_picker.SetPath(dark_flat_path)
         self.chk_to_align.Enable(False)
         self.to_debayer.Enable(False)
         self.chk_non_linear.Enable(False)
         self.btn_load_files.Enable(False)
         self.results_path_picker.Enable(False)
+        self.results_label.Enable(False)
+        self.magnitude_label.Enable(False)
+        self.magnitude_input.Enable(False)
         self.btn_process.Enable(False)
         self.checkbox_list.SetObjects([])
         self.checkbox_list.Refresh(eraseBackground=False)
@@ -272,6 +280,27 @@ class MyFrame(wx.Frame):
             short_file_names = [os.path.join(split(split(fp)[0])[1], split(fp)[1]) for fp in file_list]
         return short_file_names
 
+    def on_header_loaded(self):
+        self.source_data.stop_event.clear()
+        self.progress_frame.Close()
+        self.checkbox_list.SetObjects([])
+        short_file_paths = self._gen_short_file_names([item.file_name for item in self.source_data.headers])
+        self.checkbox_list.SetObjects([
+            MyDataObject(
+                fp, header.timestamp, header.exposure, checked=True
+            ) for fp, header in zip(short_file_paths, self.source_data.headers)
+        ])
+        objects = self.checkbox_list.GetObjects()
+        for obj in objects:
+            self.checkbox_list.SetCheckState(obj, True)
+        self.checkbox_list.RefreshObjects(objects)
+        paths = [item.file_name for item in self.source_data.headers]
+        logger.log.debug(f"Added the following files: {paths}")
+        if paths:
+            self.btn_load_files.Enable(True)
+            self.chk_to_align.Enable(True)
+            self.to_debayer.Enable(True)
+            self.chk_non_linear.Enable(True)
 
     def on_add_files(self, event):
         wildcard = "Fits files (*.fits)|*.fits;*.FITS;*.fit;*.FIT|XISF files (*.xisf)|*.xisf;*.XISF|All files (*.*)|*.*"
@@ -283,32 +312,19 @@ class MyFrame(wx.Frame):
         paths = []
         if dialog.ShowModal() == wx.ID_OK:
             paths = dialog.GetPaths()
-            # TODO: Populate other parameters
-            if self.source_data:
-                self.source_data.extend_headers(paths)
-            else:
-                self.source_data: SourceDataV2 = SourceDataV2(paths)
-            self.checkbox_list.SetObjects([])
-            short_file_paths = self._gen_short_file_names([item.file_name for item in self.source_data.headers])
-            self.checkbox_list.SetObjects([
-                MyDataObject(
-                    fp, header.timestamp, header.exposure, checked=True
-                ) for fp, header in zip(short_file_paths, self.source_data.headers)
-            ])
-            objects = self.checkbox_list.GetObjects()
-            for obj in objects:
-                self.checkbox_list.SetCheckState(obj, True)
-            self.checkbox_list.RefreshObjects(objects)
+            if self.source_data is None:
+                self.source_data: SourceDataV2 = SourceDataV2()
+            self.progress_frame = ProgressFrame(self, "Loading headers...", stop_event=self.source_data.stop_event)
+            def load_headers():
+                self.source_data.extend_headers(paths, progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
+                wx.CallAfter(self.on_header_loaded)
+            self.process_thread = threading.Thread(target=load_headers)
+            self.progress_frame.Show()
+            self.process_thread.start()
         dialog.Destroy()
-        logger.log.debug(f"Added the following files: {paths}")
-        if paths:
-            self.btn_load_files.Enable(True)
-            self.chk_to_align.Enable(True)
-            self.to_debayer.Enable(True)
-            self.chk_non_linear.Enable(True)
 
     def on_load_files(self, event):
-        self.progress_frame = ProgressFrame(self, "Loading progress")
+        self.progress_frame = ProgressFrame(self, "Loading progress", stop_event=self.source_data.stop_event)
         self.progress_frame.progress.SetValue(0)
 
         # self.progress_bar.SetValue(0)
@@ -356,39 +372,65 @@ class MyFrame(wx.Frame):
         def load_images_calibrate_and_align():
             self.progress_frame.label.SetLabel("Loading images...")
             self.source_data.load_images(progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-            self.progress_frame.label.SetLabel("Loading dark...")
-            master_dark = self.source_data.make_master_dark(
-                self.source_data.make_file_paths(dark_path),
-                progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-            self.progress_frame.label.SetLabel("Loading dark flat...")
-            master_dark_flat = self.source_data.make_master_dark(
-                self.source_data.make_file_paths(dark_flat_path),
-                progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-            self.progress_frame.label.SetLabel("Loading flats...")
-            flats = self.source_data.load_flats(
-                self.source_data.make_file_paths(flat_path),
-                progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-            self.source_data.original_frames -= master_dark
-            for flat in flats:
-                flat -= master_dark_flat
-            master_flat = np.average(flats, axis=0)
-            self.source_data.original_frames /= master_flat
-            self.progress_frame.label.SetLabel("Plate solving...")
-            self.source_data.plate_solve_all(progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-            if self.to_align:
+
+            master_dark = None
+            master_dark_flat = None
+            master_flat = None
+            if not self.source_data.stop_event.is_set():
+                if dark_path:
+                    if os.path.exists(dark_path):
+                        self.progress_frame.label.SetLabel("Loading dark...")
+                        master_dark = self.source_data.make_master_dark(
+                            self.source_data.make_file_paths(dark_path),
+                            progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
+                    else:
+                        logger.log.warning(f"Dark path {dark_path} does not exist. Skipping make master dark...")
+            if not self.source_data.stop_event.is_set():
+                if dark_flat_path:
+                    if os.path.exists(dark_flat_path):
+                        self.progress_frame.label.SetLabel("Loading dark flat...")
+                        master_dark_flat = self.source_data.make_master_dark(
+                            self.source_data.make_file_paths(dark_flat_path),
+                            progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
+                    else:
+                        logger.log.warning(f"Dark flat path {dark_flat_path} does not exist. "
+                                           f"Skipping make master dark flat...")
+
+            if not self.source_data.stop_event.is_set():
+                if flat_path:
+                    if os.path.exists(flat_path):
+                        self.progress_frame.label.SetLabel("Loading flats...")
+                        flats = self.source_data.load_flats(
+                            self.source_data.make_file_paths(flat_path),
+                            progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
+                        if master_dark_flat is not None:
+                            for flat in flats:
+                                flat -= master_dark_flat
+                        master_flat = np.average(flats, axis=0)
+            if master_dark is not None:
+                self.source_data.original_frames -= master_dark
+            if master_flat is not None:
+                self.source_data.original_frames /= master_flat
+            if self.to_align and not self.source_data.stop_event.is_set():
+                self.progress_frame.label.SetLabel("Plate solving...")
+                self.source_data.plate_solve_all(progress_bar=ProgressBarFactory.create_progress_bar(
+                    self.progress_frame.progress))
+            if self.to_align and not self.source_data.stop_event.is_set():
                 self.progress_frame.label.SetLabel("Aligning images...")
-                self.source_data.align_images_wcs(progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-            self.progress_frame.label.SetLabel("Cropping images...")
-            self.source_data.crop_images()
-            # if self.to_align:
-            #     self.progress_frame.label.SetLabel("Secondary aligning images... ")
-            #     self.source_data.secondary_align_images(progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-
-            if not self.chk_non_linear.GetValue():
+                self.source_data.align_images_wcs(progress_bar=ProgressBarFactory.create_progress_bar(
+                    self.progress_frame.progress))
+            if not self.source_data.stop_event.is_set():
+                self.progress_frame.label.SetLabel("Cropping images...")
+                self.source_data.crop_images()
+            if not self.source_data.stop_event.is_set() and not self.chk_non_linear.GetValue():
                 self.progress_frame.label.SetLabel("Stretching images... ")
-                self.source_data.stretch_images(progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-            self.source_data.images_from_buffer()
-
+                self.source_data.stretch_images(progress_bar=ProgressBarFactory.create_progress_bar(
+                    self.progress_frame.progress))
+            if not self.source_data.stop_event.is_set():
+                self.source_data.images_from_buffer()
+            else:
+                self.source_data.original_frames = None
+            self.source_data.stop_event.clear()
             self.progress_frame.Close()
             wx.CallAfter(self.on_load_finished)
         self.process_thread = threading.Thread(target=load_images_calibrate_and_align)
@@ -396,23 +438,28 @@ class MyFrame(wx.Frame):
         self.process_thread.start()
 
     def on_load_finished(self):
-        short_file_paths = self._gen_short_file_names([item.file_name for item in self.source_data.headers])
-        self.checkbox_list.SetObjects([
-            MyDataObject(
-                fp, header.timestamp, header.exposure, checked=True
-            ) for fp, header in zip(short_file_paths, self.source_data.headers)
-        ])
-        objects = self.checkbox_list.GetObjects()
-        for obj in objects:
-            self.checkbox_list.SetCheckState(obj, True)
-        self.checkbox_list.SelectObject(objects[0])
-        self.checkbox_list.RefreshObjects(objects)
-        img_to_draw = self.source_data.images[0]
-        img_to_draw = (img_to_draw * 255).astype('uint8')
-        self.draw_panel.image_array = img_to_draw
-        self.draw_panel.Refresh(eraseBackground=False)
-        self.results_path_picker.Enable(True)
-        self.btn_process.Enable(True)
+        self.source_data.stop_event.clear()
+        if self.source_data.images is not None and len(self.source_data.images) > 0:
+            short_file_paths = self._gen_short_file_names([item.file_name for item in self.source_data.headers])
+            self.checkbox_list.SetObjects([
+                MyDataObject(
+                    fp, header.timestamp, header.exposure, checked=True
+                ) for fp, header in zip(short_file_paths, self.source_data.headers)
+            ])
+            objects = self.checkbox_list.GetObjects()
+            for obj in objects:
+                self.checkbox_list.SetCheckState(obj, True)
+            self.checkbox_list.SelectObject(objects[0])
+            self.checkbox_list.RefreshObjects(objects)
+            img_to_draw = self.source_data.images[0]
+            img_to_draw = (img_to_draw * 255).astype('uint8')
+            self.draw_panel.image_array = img_to_draw
+            self.draw_panel.Refresh(eraseBackground=False)
+            self.results_label.Enable(True)
+            self.magnitude_label.Enable(True)
+            self.magnitude_input.Enable(True)
+            self.results_path_picker.Enable(True)
+            self.btn_process.Enable(True)
 
     def on_item_selected(self, event):
         if self.source_data.images is not None and len(self.source_data.images) > 0:
@@ -430,7 +477,7 @@ class MyFrame(wx.Frame):
             self.draw_panel.Refresh(eraseBackground=False)
 
     def on_process(self, event):
-        self.progress_frame = ProgressFrame(self, "Finding moving objects")
+        self.progress_frame = ProgressFrame(self, "Finding moving objects", stop_event=self.source_data.stop_event)
         self.progress_frame.progress.SetValue(0)
         output_folder = self.results_path_picker.GetPath()
         objects = self.checkbox_list.GetObjects()
@@ -441,15 +488,19 @@ class MyFrame(wx.Frame):
                 use_img_mask.append(True)
             else:
                 use_img_mask.append(False)
-        # self.stop_event = Event()
+        self.source_data.usage_map = np.array(use_img_mask, dtype=bool)
 
         def find_asteroids():
             self.progress_frame.label.SetLabel("Finding moving objects...")
-            results = predict_asteroids(self.source_data, use_img_mask, progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-            self.progress_frame.label.SetLabel("Saving results...")
-            plt = save_results(source_data=self.source_data, results=results, output_folder=output_folder)
-            self.progress_frame.label.SetLabel("Annotating results...")
-            annotate_results(self.source_data, plt, output_folder)
+            results = predict_asteroids(self.source_data, progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
+            if not self.source_data.stop_event.is_set():
+                self.progress_frame.label.SetLabel("Saving results...")
+                image_to_annotate = save_results(source_data=self.source_data, results=results, output_folder=output_folder)
+            if not self.source_data.stop_event.is_set():
+                self.progress_frame.label.SetLabel("Annotating results...")
+                magnitude_limit = float(self.magnitude_input.GetValue())
+                annotate_results(self.source_data, image_to_annotate, output_folder, magnitude_limit=magnitude_limit)
+            self.source_data.stop_event.clear()
             self.progress_frame.Close()
 
         self.progress_frame.Show()
@@ -458,7 +509,7 @@ class MyFrame(wx.Frame):
 
     def on_process_finished(self):
         self.progress_frame.Close()
-
+        self.source_data.usage_map = None
 
     def on_start_again(self, event):
         self.source_data = None
