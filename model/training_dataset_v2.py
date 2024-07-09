@@ -1,3 +1,4 @@
+import numba
 import numpy as np
 import os
 import sys
@@ -13,6 +14,8 @@ from bs4 import BeautifulSoup
 from typing import Optional
 import cv2
 import json
+from backend.consuming_functions.measure_execution_time import measure_execution_time
+import time
 
 from backend.source_data_v2 import SourceDataV2, CHUNK_SIZE
 
@@ -37,6 +40,9 @@ class RandomObject:
 
 class TrainingSourceDataV2(SourceDataV2):
     SAMPLES_FOLDER = os.path.join(sys.path[1], "star_samples")
+    OBJ_TYPE_STAR = "star"
+    OBJ_TYPE_ALL = "all"
+    OBJ_TYPE_COMET = "comet"
 
     def __init__(self, to_debayer: bool = False, number_of_images: Optional[int] = None) -> None:
         # file_list = file_list[:number_of_images]
@@ -45,16 +51,39 @@ class TrainingSourceDataV2(SourceDataV2):
         self.number_of_images = number_of_images
         self.exclusion_boxes = []
         logger.log.info("Loading star samples")
-        self.star_samples = self._load_star_samples()
+        self.star_samples, self.comet_samples = self._load_star_samples()
 
     @classmethod
-    def _load_star_samples(cls) -> np.ndarray:
-        file_list = [
-            os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER) if ".tif" in item]
-        star_samples = np.array([np.array(tifffile.tifffile.imread(item)) for item in file_list])
-        if len(star_samples.shape) == 4:
-            star_samples = np.reshape(star_samples, star_samples.shape[:3])
-        return star_samples
+    def _load_star_samples(cls) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        file_list_stars = [
+            os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER) if ".tif" in item.lower() and "star" in item.lower()]
+        file_list_comets = [
+            os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER) if ".tif" in item.lower() and "comet" in item.lower()]
+        star_samples = [np.array(tifffile.tifffile.imread(item)) for item in file_list_stars]
+        comet_samples = [np.array(tifffile.tifffile.imread(item)) for item in file_list_comets]
+        for num, sample in enumerate(star_samples):
+            if len(sample.shape) == 3:
+                star_samples[num] = np.reshape(sample, sample.shape[:2])
+            if sample.shape[0] % 2 == 1:
+                star_samples[num] = np.delete(star_samples[num], 0, axis=0)
+
+            if sample.shape[1] % 2 == 1:
+                star_samples[num] = np.delete(star_samples[num], 0, axis=1)
+            if sample.dtype == 'uint16':
+                star_samples[num] = star_samples[num].astype(np.float32) / 65535
+
+        for num, sample in enumerate(comet_samples):
+            if len(sample.shape) == 3:
+                comet_samples[num] = np.reshape(sample, sample.shape[:2])
+            if sample.shape[0] % 2 == 1:
+                comet_samples[num] = np.delete(comet_samples[num], 0, axis=0)
+
+            if sample.shape[1] % 2 == 1:
+                comet_samples[num] = np.delete(comet_samples[num], 0, axis=1)
+            if sample.dtype == 'uint16':
+                comet_samples[num] = comet_samples[num].astype(np.float32) / 65535
+
+        return star_samples, comet_samples
 
     def __get_exclusion_boxes_paths(self):
         folders = {os.path.dirname(header.file_name) for header in self.headers}
@@ -127,7 +156,7 @@ class TrainingSourceDataV2(SourceDataV2):
         cv2.imshow("lalala", small)
         cv2.waitKey(0)
 
-    def get_random_shrink(self) -> np.ndarray:
+    def get_random_shrink(self):
         generated = False
         while not generated:
             y = random.randint(0, self.shape[1] - CHUNK_SIZE)
@@ -141,110 +170,37 @@ class TrainingSourceDataV2(SourceDataV2):
                 res = np.reshape(res, res.shape[:3])
                 return res
 
-    @classmethod
-    def insert_star_by_coords(cls, image, star, coords):
-        star_y_size, star_x_size = star.shape[:2]
-        image_y_size, image_x_size = image.shape[:2]
-        star = np.reshape(star, (star.shape[:2]))
-        image = np.reshape(image, (image.shape[:2]))
-        x, y = coords
-        x = round(x)
-        y = round(y)
-        if x + star_x_size // 2 < 0 or x - star_x_size // 2 > image_x_size:
-            return image
-        if y + star_y_size // 2 < 0 or y - star_y_size // 2 > image_y_size:
-            return image
-
-        cut_top = y - star_y_size // 2
-        cut_top = -cut_top if cut_top < 0 else 0
-        cut_bottom = image_y_size - y - star_y_size // 2
-        cut_bottom = -cut_bottom if cut_bottom < 0 else 0
-        cut_left = x - star_x_size // 2
-        cut_left = -cut_left if cut_left < 0 else 0
-        cut_right = image_x_size - x - star_x_size // 2
-        cut_right = -cut_right if cut_right < 0 else 0
-
-        y_slice = slice(y + cut_top - star_y_size // 2, y - cut_bottom + star_y_size // 2)
-        x_slice = slice(x + cut_left - star_x_size // 2, x - cut_right + star_x_size // 2)
-        image_to_correct = image[y_slice, x_slice]
-        image[y_slice, x_slice] = np.maximum(
-            star[int(cut_top):int(star_y_size - cut_bottom), int(cut_left):int(star_x_size - cut_right)],
-            image_to_correct)
-        return image
+    @staticmethod
+    def insert_star_by_coords(image, star, coords):
+        return insert_star_by_coords(image, star, coords)
 
     @classmethod
     def calculate_star_form_on_single_image(cls, image, star, start_coords, movement_vector, exposure_time=None):
-        per_image_movement_vector = np.array(movement_vector) * exposure_time / 3600
-        y_move, x_move = per_image_movement_vector
-        start_y, start_x = start_coords
-        dx = 0
-        if x_move == y_move == 0:
-            image = cls.insert_star_by_coords(image, star, (start_y, start_x))
-            return image
-        x_moves_per_y_moves = x_move / y_move
+        return calculate_star_form_on_single_image(image, star, start_coords, movement_vector, exposure_time)
 
-        for dy in range(round(y_move + 1)):
-            if dy * x_moves_per_y_moves // 1 > dx:
-                dx += 1
-            elif dy * x_moves_per_y_moves // 1 < -dx:
-                dx -= 1
-            image = cls.insert_star_by_coords(image, star, (start_y + dy, start_x + dx))
-        return image
-
-    def generate_timestamps(self) -> Sequence[datetime.datetime]:
-        # generate random timestamps emulating timestamps of observations sessions staring from now
-        # each session should have at least 5 timestamps. If there are less than 5 timestamps - only one session will be
-        # generated. number of sessions is random. Interval between timestamps is equal to the same random exposure time
-        # applicable for all intervals plus some random offset
-        ts_num = len(self.images)
-        max_sessions_num = min((ts_num - 1) // 5 + 1, 4)
-        sessions_num = random.randrange(0, max_sessions_num)
-        exposures = (0.25, 0.5, *tuple(range(1, 11)))
-        exposure = random.choice(exposures) * 60
-        new_session_starts = []
-        bla_timestamps = list(range(ts_num))
-        for _ in range(sessions_num):
-            temp_session_start = random.choice(bla_timestamps)
-            bla_timestamps.pop(bla_timestamps.index(temp_session_start))
-            new_session_starts.append(temp_session_start)
-        new_session_starts.sort()
-        start_ts = datetime.datetime.now()
-        timestamps = []
-        max_inter_exposure = 20 * 60  # 20 minutes
-        added_days = 0
-        for num in range(ts_num):
-            if num == 0:
-                next_timestamp = datetime.datetime.now()
-            elif num in new_session_starts:
-                added_days += 1
-                next_timestamp = start_ts + datetime.timedelta(
-                    days=added_days, hours=random.randrange(0, 3), seconds=random.randrange(0, 3600))
-            else:
-                next_timestamp = timestamps[-1] + datetime.timedelta(
-                    seconds=exposure + random.randrange(1, max_inter_exposure + 1))
-            timestamps.append(next_timestamp)
+    def generate_timestamps(self):
+        timestamps, exposure = generate_timestamps(len(self.images))
+        timestamps = [datetime.datetime.utcfromtimestamp(ts) for ts in timestamps]
         return timestamps, exposure
 
-    def generate_random_objects(self):
-        start_y = random.randrange(0, CHUNK_SIZE)
-        start_x = random.randrange(0, CHUNK_SIZE)
-        start_frame_idx = random.randrange(0, len(self.images))
-        timestamps, exposure = self.generate_timestamps()
-        brightness_above_noize = float(random.randrange(300, 1001)) / 1000
-        star_sample = random.choice(self.star_samples)
-        total_time = (timestamps[-1] - timestamps[0]).total_seconds()
-        total_time /= 3600
-        min_vector = max(MIN_TOTAL_MOVEMENT / total_time, 0.5)
-        max_vector = 50.  # pixels/hour
-        vector_len = random.uniform(min_vector, max_vector)
-        movement_angle = random.uniform(0., 2 * np.pi)
-        movement_vector = np.array([np.sin(movement_angle), np.cos(movement_angle)]) * vector_len
-        return RandomObject(start_y, start_x, start_frame_idx, movement_vector, brightness_above_noize, star_sample,
-                           exposure, timestamps)
+    def generate_random_objects(self, obj_type="star"):
+        if obj_type == self.OBJ_TYPE_STAR:
+            samples = self.star_samples
+        elif obj_type == self.OBJ_TYPE_COMET:
+            samples = self.comet_samples
+        elif obj_type == self.OBJ_TYPE_ALL:
+            samples = self.comet_samples + self.star_samples
+        else:
+            raise ValueError(f"Unknown object type: {obj_type}")
 
+        start_y, start_x, start_frame_idx, movement_vector, brightness_above_noize, star_sample, exposure, timestamps = generate_random_objects(len(self.images), samples)
+        timestamps = [datetime.datetime.utcfromtimestamp(ts) for ts in timestamps]
+        return RandomObject(start_y, start_x, start_frame_idx, movement_vector, brightness_above_noize, star_sample, exposure, timestamps)
+
+    # @measure_execution_time
     def draw_object_on_image_series_numpy(self, rand_obg):
         imgs = self.get_random_shrink()
-        imgs = np.reshape(imgs, (imgs.shape[:3]))
+        imgs = np.reshape(np.copy(imgs), (imgs.shape[:3]))
         old_images = np.copy(imgs)
         drawn = 0
 
@@ -266,11 +222,16 @@ class TrainingSourceDataV2(SourceDataV2):
             ):
                 inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
                 y, x = inter_image_movement_vector + np.array([rand_obg.start_y, rand_obg.start_x])
+                if y + star_img.shape[0] < 0 or y - star_img.shape[0] > img.shape[0]:
+                    break
+                if x + star_img.shape[1] < 0 or x - star_img.shape[1] > img.shape[1]:
+                    break
 
                 new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, rand_obg.exposure)
-                result.append(new_img)
+                img[:] = new_img
+                # result.append(new_img)
 
-            result = result[::-1]
+            # result = result[::-1]
 
             to_end_slice = slice(rand_obg.start_frame_idx, None, None)
             for img, timestamp in zip(
@@ -279,14 +240,20 @@ class TrainingSourceDataV2(SourceDataV2):
             ):
                 inter_image_movement_vector = np.array(movement_vector) * (timestamp - start_ts).total_seconds() / 3600
                 y, x = inter_image_movement_vector + np.array([rand_obg.start_y, rand_obg.start_x])
+                if y + star_img.shape[0] < 0 or y - star_img.shape[0] > img.shape[0]:
+                    break
+                if x + star_img.shape[1] < 0 or x - star_img.shape[1] > img.shape[1]:
+                    break
                 new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, rand_obg.exposure)
-                result.append(new_img)
-            result = np.array(result)
+                img[:] = new_img
+                # result.append(new_img)
+            # result = np.array(result)
+            result = imgs
 
             drawn = 1
             if (result == old_images).all():
                 drawn = 0
-                rand_obg = self.generate_random_objects()
+                rand_obg = self.generate_random_objects(self.OBJ_TYPE_ALL)
         return result, drawn
 
     def draw_variable_star(self, rand_obj):
@@ -319,6 +286,7 @@ class TrainingSourceDataV2(SourceDataV2):
             drawn = 0
         return imgs, drawn
 
+    # @measure_execution_time
     def draw_one_image_artefact(self, imgs):
         number_of_artefacts = random.choice(list(range(1, 5)) + [0] * 10)
         for _ in range(number_of_artefacts):
@@ -350,10 +318,12 @@ class TrainingSourceDataV2(SourceDataV2):
                 imgs[start_image_idx], star_img, (y, x), - movement_vector, 10000)
         return imgs
 
+
     @staticmethod
+    # @measure_execution_time
     def draw_hot_pixels(imgs, dead=False):
         imgs = np.copy(imgs)
-        probablity = random.randrange(30, 81)
+        probablity = random.randrange(10, 51)
         brightness = random.randrange(90, 101) / 100.
         result = []
         for img in imgs:
@@ -366,9 +336,10 @@ class TrainingSourceDataV2(SourceDataV2):
         result = np.array(result)
         return result
 
+    # @measure_execution_time
     def draw_hot_stars(self, imgs):
         imgs = np.copy(imgs)
-        probablity = random.randrange(30, 81)
+        probablity = random.randrange(10, 51)
         brightness = random.randrange(80, 101) / 100.
         star_img = random.choice(self.star_samples)
         star_img *= brightness / np.amax(star_img)
@@ -384,21 +355,14 @@ class TrainingSourceDataV2(SourceDataV2):
         result = np.array(result)
         return result
 
-    # @property
-    # def images(self):
-    #     if self.__shared:
-    #         return self.original_frames[:, self.y_borders, self.x_borders] if self.original_frames is not None else None
-    #     else:
-    #         return self.__images
-
 
 class TrainingDatasetV2:
     def __init__(self, source_datas: Sequence[TrainingSourceDataV2]):
         self.source_datas = source_datas
 
-    def make_series(self, source_data):
-        rand_obg = source_data.generate_random_objects()
-        if random.randint(1, 101) > 60:
+    def make_series(self, source_data: TrainingSourceDataV2):
+        rand_obg = source_data.generate_random_objects(obj_type=source_data.OBJ_TYPE_ALL)
+        if random.randint(1, 101) > 50:
             what_to_draw = random.randrange(0, 100)
             if what_to_draw < 200:
                 imgs, res = source_data.draw_object_on_image_series_numpy(rand_obg)
@@ -416,7 +380,6 @@ class TrainingDatasetV2:
                 imgs = source_data.draw_hot_stars(imgs)
             else:
                 imgs = source_data.draw_hot_pixels(imgs, bool(random.randrange(0, 2)))
-
         imgs = source_data.prepare_images(imgs)
         imgs, timestamps = source_data.adjust_chunks_to_min_len(imgs, rand_obg.timestamps, min_len=5)
 
@@ -431,6 +394,7 @@ class TrainingDatasetV2:
         # return imgs, slow_images, np.array([res])
         return imgs, None, np.array([res])
 
+    # @measure_execution_time
     def make_batch(self, batch_size, save=False):
         source_data = random.choice(self.source_datas)
         batch = [self.make_series(source_data) for _ in range(batch_size)]
@@ -457,6 +421,118 @@ class TrainingDatasetV2:
         while True:
             yield self.make_batch(batch_size, bla)
             bla = False
+
+
+@numba.jit(nopython=True, fastmath=True)
+def insert_star_by_coords(image, star, coords):
+    star_y_size, star_x_size = star.shape[:2]
+    image_y_size, image_x_size = image.shape[:2]
+    # star = np.reshape(star, (star.shape[:2]))
+    # image = np.reshape(image, (image.shape[:2]))
+    x, y = coords
+    x = round(x)
+    y = round(y)
+    if x + star_x_size // 2 < 0 or x - star_x_size // 2 > image_x_size:
+        return image
+    if y + star_y_size // 2 < 0 or y - star_y_size // 2 > image_y_size:
+        return image
+
+    cut_top = y - star_y_size // 2
+    cut_top = -cut_top if cut_top < 0 else 0
+    cut_bottom = image_y_size - y - star_y_size // 2
+    cut_bottom = -cut_bottom if cut_bottom < 0 else 0
+    cut_left = x - star_x_size // 2
+    cut_left = -cut_left if cut_left < 0 else 0
+    cut_right = image_x_size - x - star_x_size // 2
+    cut_right = -cut_right if cut_right < 0 else 0
+
+    y_slice = slice(y + cut_top - star_y_size // 2, y - cut_bottom + star_y_size // 2)
+    x_slice = slice(x + cut_left - star_x_size // 2, x - cut_right + star_x_size // 2)
+    image_to_correct = image[y_slice, x_slice]
+    image[y_slice, x_slice] = np.maximum(
+        star[int(cut_top):int(star_y_size - cut_bottom), int(cut_left):int(star_x_size - cut_right)],
+        image_to_correct)
+    return image
+
+
+@numba.jit(nopython=True, fastmath=True)
+def calculate_star_form_on_single_image(image, star, start_coords, movement_vector, exposure_time=None):
+    per_image_movement_vector = movement_vector * exposure_time / 3600
+    y_move, x_move = per_image_movement_vector
+    start_y, start_x = start_coords
+    dx = 0
+    if x_move == y_move == 0:
+        image = insert_star_by_coords(image, star, (start_y, start_x))
+        return image
+    x_moves_per_y_moves = x_move / y_move
+
+    for dy in range(round(y_move + 1)):
+        if dy * x_moves_per_y_moves // 1 > dx:
+            dx += 1
+        elif dy * x_moves_per_y_moves // 1 < -dx:
+            dx -= 1
+        image = insert_star_by_coords(image, star, (start_y + dy, start_x + dx))
+        if start_y + dy + star.shape[0] < 0 or start_y + dy - star.shape[0] > image.shape[0] or start_x + dx + star.shape[1] < 0 or start_x + dx - star.shape[1] > image.shape[1]:
+            break
+    return image
+
+
+@numba.jit(nopython=True, fastmath=True)
+def generate_timestamps(ts_num):
+    # generate random timestamps emulating timestamps of observations sessions staring from now
+    # each session should have at least 5 timestamps. If there are less than 5 timestamps - only one session will be
+    # generated. number of sessions is random. Interval between timestamps is equal to the same random exposure time
+    # applicable for all intervals plus some random offset
+    max_sessions_num = min((ts_num - 1) // 5 + 1, 4)
+    sessions_num = random.randrange(0, max_sessions_num)
+    exposures = np.array([0.25, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    exposure = exposures[random.randrange(len(exposures))]
+    new_session_starts = []
+    bla_timestamps = np.array(list(range(ts_num)))
+    for _ in range(sessions_num):
+        idx = random.randrange(len(bla_timestamps))
+        temp_session_start = bla_timestamps[idx]
+        bla_timestamps = np.delete(bla_timestamps, idx)
+        # bla_timestamps.pop(bla_timestamps.index(temp_session_start))
+        new_session_starts.append(temp_session_start)
+    new_session_starts.sort()
+    # with numba.objmode:
+    start_ts = 0
+    timestamps = []
+    max_inter_exposure = 20 * 60  # 20 minutes
+    added_days = 0
+    for num in range(ts_num):
+        if num == 0:
+            next_timestamp = 0
+        elif num in new_session_starts:
+            added_days += 1
+            next_timestamp = start_ts + added_days * 24 * 3600 + random.randrange(0, 3) * 60 + random.randrange(0, 3600)
+            # next_timestamp = start_ts + datetime.timedelta(
+            #     days=added_days, hours=random.randrange(0, 3), seconds=random.randrange(0, 3600))
+        else:
+            next_timestamp = timestamps[-1] + exposure + random.randrange(1, max_inter_exposure + 1)
+            # next_timestamp = timestamps[-1] + datetime.timedelta(
+            #     seconds=exposure + random.randrange(1, max_inter_exposure + 1))
+        timestamps.append(next_timestamp)
+    return timestamps, exposure
+
+
+@numba.jit(nopython=True, fastmath=True)
+def generate_random_objects(imgs_num, star_samples):
+    start_y = random.randrange(0, CHUNK_SIZE)
+    start_x = random.randrange(0, CHUNK_SIZE)
+    start_frame_idx = random.randrange(0, imgs_num)
+    timestamps, exposure = generate_timestamps(imgs_num)
+    brightness_above_noize = float(random.randrange(500, 1001)) / 1000
+    star_sample = star_samples[random.randrange(len(star_samples))]
+    total_time = timestamps[-1] - timestamps[0]
+    total_time /= 3600
+    min_vector = max(MIN_TOTAL_MOVEMENT / total_time, 0.5)
+    max_vector = 30.  # pixels/hour
+    vector_len = random.uniform(min_vector, max_vector)
+    movement_angle = random.uniform(0., 2 * np.pi)
+    movement_vector = np.array([np.sin(movement_angle), np.cos(movement_angle)], dtype=np.float32) * vector_len
+    return start_y, start_x, start_frame_idx, movement_vector, brightness_above_noize, star_sample, exposure, timestamps
 
 
 if __name__ == '__main__':

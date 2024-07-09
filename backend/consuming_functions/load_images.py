@@ -68,7 +68,7 @@ def load_image_xisf(filename: str, to_debayer: bool = False) -> np.ndarray:
 
 
 def load_image(file_path: str, to_debayer: bool = False) -> np.ndarray:
-    if file_path.lower().endswith(".fits"):
+    if file_path.lower().endswith(".fits") or file_path.lower().endswith(".fit"):
         return load_image_fits(file_path, to_debayer)
     elif file_path.lower().endswith(".xisf"):
         return load_image_xisf(file_path, to_debayer)

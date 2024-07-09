@@ -18,6 +18,7 @@ from backend.data_classes import Header
 import requests
 from backend.known_object import KnownObject
 from threading import Event
+import numba
 from backend.consuming_functions.measure_execution_time import measure_execution_time
 
 
@@ -288,7 +289,7 @@ class SourceDataV2:
         print(self.y_borders, self.x_borders)
         self.__cropped = True
         self.footprint_map = None
-        self.wcs, _ = self.plate_solve(0)
+        # self.wcs, _ = self.plate_solve(0)
 
     # def secondary_align_images(self, y_splits: int = 3, x_splits: int = 3,
     #                            progress_bar: Optional[AbstractProgressBar] = None) -> None:

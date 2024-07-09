@@ -98,7 +98,7 @@ def SlowFast(input_shape=(None, 64, 64, 1), num_fusions=3):
 #     slowfast_model = SlowFast(num_fusions=3)  # Example: Three fusion steps
 #     return slowfast_model
 def build_model():
-    from model.slow_fast_exp import SlowFast_body, bottleneck
+    from slow_fast_exp import SlowFast_body, bottleneck
     model = SlowFast_body([3, 4, 6, 3], bottleneck)
     return model
     # slowfast_model = SlowFast(num_fusions=3)  # Example: Three fusion steps

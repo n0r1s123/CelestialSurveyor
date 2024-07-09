@@ -1,6 +1,7 @@
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
+import re
 
 
 class KnownObject:
@@ -11,7 +12,7 @@ class KnownObject:
             dec=properties["Astrometric Dec (dd mm'ss\")"].replace("'", " ").replace('"', ''),
             unit=(u.hourangle, u.deg)
         )
-        self.magnitude = float(properties["Visual magnitude (V)"])
+        self.magnitude = properties["Visual magnitude (V)"]
         self._wcs = wcs
         self.__pixel_coordinates = None
 
