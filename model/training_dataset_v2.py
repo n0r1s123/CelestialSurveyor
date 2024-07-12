@@ -373,9 +373,9 @@ class TrainingDatasetV2:
             res = 0
             imgs = source_data.get_random_shrink()
 
-        if random.randint(0, 100) >= 10:
+        if random.randint(0, 100) >= 90:
             imgs = source_data.draw_one_image_artefact(imgs)
-        if random.randint(0, 100) >= 10:
+        if random.randint(0, 100) >= 90:
             if random.randint(0, 100) >= 50:
                 imgs = source_data.draw_hot_stars(imgs)
             else:
@@ -417,9 +417,13 @@ class TrainingDatasetV2:
         return X_fast_batch, y_batch
 
     def batch_generator(self, batch_size):
-        bla = True
+        bla = False
+        i = 0
         while True:
+            if i == 450:
+                bla = True
             yield self.make_batch(batch_size, bla)
+            i += 1
             bla = False
 
 
@@ -483,19 +487,37 @@ def generate_timestamps(ts_num):
     # each session should have at least 5 timestamps. If there are less than 5 timestamps - only one session will be
     # generated. number of sessions is random. Interval between timestamps is equal to the same random exposure time
     # applicable for all intervals plus some random offset
-    max_sessions_num = min((ts_num - 1) // 5 + 1, 4)
-    sessions_num = random.randrange(0, max_sessions_num)
+    min_frames_per_session = 8
+
+    max_sessions_num = min((ts_num - 1) // 8, 4)
+    sessions_num = 0 if max_sessions_num == 0 else random.randrange(0, max_sessions_num)
     exposures = np.array([0.25, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     exposure = exposures[random.randrange(len(exposures))]
+
+    if sessions_num == 0:
+        frames_per_session = [ts_num]
+    else:
+        frames_per_session = []
+        remaining_sum = ts_num
+        for i in range(sessions_num):
+            num = random.randint(min_frames_per_session, remaining_sum - min_frames_per_session * (sessions_num - i))
+            frames_per_session.append(num)
+            remaining_sum -= num
+        frames_per_session.append(remaining_sum)
+
     new_session_starts = []
-    bla_timestamps = np.array(list(range(ts_num)))
-    for _ in range(sessions_num):
-        idx = random.randrange(len(bla_timestamps))
-        temp_session_start = bla_timestamps[idx]
-        bla_timestamps = np.delete(bla_timestamps, idx)
-        # bla_timestamps.pop(bla_timestamps.index(temp_session_start))
-        new_session_starts.append(temp_session_start)
-    new_session_starts.sort()
+    for i in range(len(frames_per_session) - 1):
+        new_session_starts.append(sum(frames_per_session[:i + 1]))
+    # new_session_starts = []
+    # free_frames_num = ts_num - sessions_num * min_frames_per_session
+    # bla_timestamps = np.array(list(range(ts_num)))
+    # for _ in range(sessions_num ):
+    #     idx = random.randrange(len(bla_timestamps))
+    #     temp_session_start = bla_timestamps[idx]
+    #     bla_timestamps = np.delete(bla_timestamps, idx)
+    #     # bla_timestamps.pop(bla_timestamps.index(temp_session_start))
+    #     new_session_starts.append(temp_session_start)
+    # new_session_starts.sort()
     # with numba.objmode:
     start_ts = 0
     timestamps = []
