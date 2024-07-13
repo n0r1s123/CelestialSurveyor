@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import uuid
 import numpy as np
 
@@ -26,7 +27,6 @@ logger = get_logger()
 
 
 CHUNK_SIZE = 64
-# TMP_FOLDER = os.ro
 
 
 class SourceDataV2:
@@ -34,7 +34,15 @@ class SourceDataV2:
         self.headers = []
         self.original_frames = None
         self.shm = None
-        self.shm_name = uuid.uuid4().hex + ".np"
+        if not os.path.exists(self.tmp_folder):
+            os.mkdir(self.tmp_folder)
+        else:
+            # only one sourcedata instance to be loaded at the same time
+            for item in os.listdir(self.tmp_folder):
+                if item.endswith(".np"):
+                    os.remove(os.path.join(self.tmp_folder, item))
+
+        self.shm_name = self.__create_shm_name('images')
         self.shm_params = None
         self.footprint_map = None
         self.to_debayer = to_debayer
@@ -50,11 +58,19 @@ class SourceDataV2:
         self.__used_images = None
         self.__usage_map_changed = True
 
+    def __create_shm_name(self, postfix: str = '') -> str:
+        shm_name = os.path.join(self.tmp_folder, f"tmp_{uuid.uuid4().hex}_{postfix}.np")
+        return shm_name
+
     def raise_stop_event(self):
         self.__stop_event.set()
 
     def clear_stop_event(self):
         self.__stop_event.clear()
+
+    @property
+    def tmp_folder(self):
+        return os.path.join(sys.path[1], "tmp")
 
     @property
     def stop_event(self):
@@ -321,7 +337,7 @@ class SourceDataV2:
     def make_master_dark(self, filenames: list[str], progress_bar: Optional[AbstractProgressBar] = None) -> np.ndarray:
         shape = (len(filenames), *self.origional_shape[1:])
         size = self.original_frames.itemsize
-        shm_name = uuid.uuid4().hex + "_darks.np"
+        shm_name = self.__create_shm_name('darks')
         for value in shape:
             size *= value
         # shm = SharedMemory(name=shm_name, create=True, size=size)
@@ -343,7 +359,7 @@ class SourceDataV2:
                          progress_bar: Optional[AbstractProgressBar] = None) -> np.ndarray:
         flat_shape = (len(flat_filenames), *self.origional_shape[1:])
         flat_size = self.original_frames.itemsize
-        flat_shm_name = uuid.uuid4().hex + "_flats.np"
+        flat_shm_name = self.__create_shm_name('flats')
         for value in flat_shape:
             flat_size *= value
         # flat_shm = SharedMemory(name=flat_shm_name, create=True, size=flat_size)
@@ -367,17 +383,13 @@ class SourceDataV2:
     def load_flats(self, flat_filenames: list[str], progress_bar: Optional[AbstractProgressBar] = None) -> np.ndarray:
         flat_shape = (len(flat_filenames), *self.origional_shape[1:])
         flat_size = self.original_frames.itemsize
-        flat_shm_name = uuid.uuid4().hex + "_flats"
+        flat_shm_name = self.__create_shm_name('flats')
         for value in flat_shape:
             flat_size *= value
-        # flat_shm = SharedMemory(name=flat_shm_name, create=True, size=flat_size)
         flat_shm_params = SharedMemoryParams(
             shm_name=flat_shm_name, shm_shape=flat_shape, shm_size=flat_size, shm_dtype=PIXEL_TYPE)
         flats = np.memmap(flat_shm_params.shm_name, dtype=PIXEL_TYPE, mode='w+', shape=flat_shape)
         load_images(flat_filenames, flat_shm_params, progress_bar=progress_bar, to_debayer=self.to_debayer)
-        # flats = np.copy(np.ndarray(shape=flat_shape, dtype=PIXEL_TYPE, buffer=flat_shm.buf))
-        # flat_shm.close()
-        # flat_shm.unlink()
         res = np.copy(flats)
         flats._mmap.close()
         del flats
