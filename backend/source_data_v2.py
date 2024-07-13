@@ -62,6 +62,19 @@ class SourceDataV2:
         shm_name = os.path.join(self.tmp_folder, f"tmp_{uuid.uuid4().hex}_{postfix}.np")
         return shm_name
 
+    def __clear_tmp_folder(self):
+        for item in os.listdir(self.tmp_folder):
+            if item.endswith(".np"):
+                os.remove(os.path.join(self.tmp_folder, item))
+
+    def __reset_shm(self):
+        if self.shm is not None:
+            self.shm.close()
+            self.shm.unlink()
+        self.__clear_tmp_folder()
+        self.shm = None
+        self.shm_name = self.__create_shm_name('images')
+
     def raise_stop_event(self):
         self.__stop_event.set()
 
@@ -94,6 +107,7 @@ class SourceDataV2:
     def set_headers(self, headers: list[Header]) -> None:
         self.headers = headers
         self.headers.sort(key=lambda header: header.timestamp)
+        self.__reset_shm()
 
     @property
     def num_frames(self) -> int:
