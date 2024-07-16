@@ -88,8 +88,13 @@ class Logger:
                 cls._instance = super(Logger, cls).__new__(cls)
                 cls._instance.log = logging.getLogger('MyLogger')
                 cls._instance.log.setLevel(cls.log_level)
+                if cls.log_level == logging.DEBUG:
+                    formatter = logging.Formatter(
+                        '[%(asctime)s] p%(process)s {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s',
+                        '%m-%d %H:%M:%S')
+                else:
+                    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-                formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
                 # Create a handler to add log messages to the text control
 
