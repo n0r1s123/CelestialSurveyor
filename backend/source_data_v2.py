@@ -3,6 +3,7 @@ import os
 import sys
 import uuid
 import numpy as np
+import requests
 
 from typing import Optional, Union, Tuple
 from astropy.wcs import WCS
@@ -16,11 +17,9 @@ from backend.consuming_functions.stretch_images import stretch_images
 from backend.data_classes import SharedMemoryParams
 from backend.progress_bar import ProgressBarCli, AbstractProgressBar
 from backend.data_classes import Header
-import requests
+
 from backend.known_object import KnownObject
 from threading import Event
-import numba
-from backend.consuming_functions.measure_execution_time import measure_execution_time
 
 
 logger = get_logger()
@@ -57,6 +56,7 @@ class SourceDataV2:
         self.__stop_event = Event()
         self.__used_images = None
         self.__usage_map_changed = True
+        self.__original_frames = None
 
     def __create_shm_name(self, postfix: str = '') -> str:
         shm_name = os.path.join(self.tmp_folder, f"tmp_{uuid.uuid4().hex}_{postfix}.np")
@@ -68,11 +68,13 @@ class SourceDataV2:
                 os.remove(os.path.join(self.tmp_folder, item))
 
     def __reset_shm(self):
-        if self.shm is not None:
-            self.shm.close()
-            self.shm.unlink()
+        # if self.shm is not None:
+        #     self.shm.close()
+        #     self.shm.unlink()
+        # self.original_frames._mmap.close()
+        self.original_frames = None
         self.__clear_tmp_folder()
-        self.shm = None
+        # self.shm = None
         self.shm_name = self.__create_shm_name('images')
 
     def raise_stop_event(self):
@@ -149,8 +151,9 @@ class SourceDataV2:
 
     def images_from_buffer(self):
         self.__images = np.copy(self.images)
-        # images = np.zeros(self.images.shape, dtype=PIXEL_TYPE)
-        # np.copyto(images, self.images)
+        self.headers = [header for idx, header in enumerate(self.headers) if self.usage_map[idx]]
+        self.__usage_map_changed = True
+        self.usage_map = np.ones((len(self.__images), ), dtype=bool)
         name = self.shm_name
         self.original_frames._mmap.close()
         del self.original_frames
@@ -158,8 +161,6 @@ class SourceDataV2:
         os.remove(name)
         self.__original_frames = None
         self.__shared = False
-        # self.__images = images
-        # print(type(self.images))
 
     @property
     def max_image(self):
@@ -175,7 +176,7 @@ class SourceDataV2:
     def wcs(self, value):
         self.__wcs = value
 
-    def load_images(self, progress_bar: Optional[AbstractProgressBar] = None) -> None:
+    def load_images(self, progress_bar: Optional[AbstractProgressBar] = None):
         logger.log.info("Loading images...")
         file_list = [header.file_name for header in self.headers]
         img = load_image(file_list[0])
@@ -184,7 +185,9 @@ class SourceDataV2:
             shm_name=self.shm_name, shm_shape=shape, shm_size=img.nbytes * len(file_list), shm_dtype=img.dtype)
         self.original_frames = np.memmap(self.shm_name, dtype=PIXEL_TYPE, mode='w+', shape=shape)
         self.__shared = True
-        load_images(file_list, self.shm_params, to_debayer=self.to_debayer, progress_bar=progress_bar, stop_event=self.stop_event)
+        load_images(
+            file_list, self.shm_params, to_debayer=self.to_debayer, progress_bar=progress_bar,
+            stop_event=self.stop_event)
 
     @staticmethod
     def calculate_raw_crop(footprint: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]]:

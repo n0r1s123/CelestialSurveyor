@@ -5,6 +5,8 @@ import os
 import sys
 import wx.lib.newevent
 import threading
+from multiprocessing import Queue
+from logging.handlers import QueueListener
 
 # Define a custom event for logging
 LogEvent, EVT_LOG_EVENT = wx.lib.newevent.NewEvent()
@@ -90,7 +92,9 @@ class Logger:
                 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
                 # Create a handler to add log messages to the text control
+
                 gui_handler = LogHandler(text_ctrl)
+                # cls.gui_handler = gui_handler
                 gui_handler.setFormatter(formatter)
                 cls._instance.log.addHandler(gui_handler)
 
@@ -114,3 +118,10 @@ class Logger:
     @text_ctrl.setter
     def text_ctrl(self, value):
         self.log.handlers[0].text_ctrl = value
+
+    def start_process_listener(self, queue: Queue):
+        self.listener = QueueListener(queue, *self.log.handlers)
+        self.listener.start()
+
+    def stop_process_listener(self):
+        self.listener.stop()

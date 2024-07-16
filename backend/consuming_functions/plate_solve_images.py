@@ -3,6 +3,8 @@ from multiprocessing import Queue, cpu_count, Pool, Manager
 from typing import Optional
 from functools import partial
 from astropy import units as u
+import traceback
+from logging.handlers import QueueHandler
 
 from backend.progress_bar import AbstractProgressBar
 from backend.data_classes import Header
@@ -18,8 +20,6 @@ logger = get_logger()
 
 
 def plate_solve_image(image: np.ndarray, header: Header, sky_coord: Optional[np.ndarray] = None):
-    # logger.log.info("Plate solving...")
-    # and the size of its field of view
     header_data = header.solve_data
     pixel = header_data.pixel_scale * u.arcsec  # known pixel scale
     img = np.copy(image)
@@ -61,13 +61,15 @@ def plate_solve(shm_params: SharedMemoryParams, headers: list[Header],
     available_cpus = cpu_count()
     frames_num = shm_params.shm_shape[0]
     used_cpus = min(available_cpus, frames_num)
+    m = Manager()
+    progress_queue = m.Queue()
+    log_queue = m.Queue()
+    logger.start_process_listener(log_queue)
+    stop_queue = m.Queue(maxsize=1)
     with Pool(processes=used_cpus) as pool:
-        m = Manager()
-        progress_queue = m.Queue()
-        stop_queue = m.Queue(maxsize=1)
         results = pool.map_async(
             partial(plate_solve_worker, shm_params=shm_params, progress_queue=progress_queue,
-                    reference_stars=reference_stars, header=headers[0], stop_queue=stop_queue),
+                    reference_stars=reference_stars, header=headers[0], stop_queue=stop_queue, log_queue=log_queue),
             np.array_split(np.arange(frames_num), used_cpus))
         if progress_bar is not None:
             progress_bar.set_total(frames_num)
@@ -75,29 +77,44 @@ def plate_solve(shm_params: SharedMemoryParams, headers: list[Header],
                 if stop_event is not None and stop_event.is_set():
                     stop_queue.put(True)
                     break
-                img_idx = progress_queue.get()
-                logger.log.debug(f"Plate solved image at index '{img_idx}'")
+                got_result = False
+                while not got_result:
+                    if not progress_queue.empty():
+                        progress_queue.get()
+                        got_result = True
+                    if not stop_queue.empty():
+                        break
+                if not stop_queue.empty():
+                    break
                 progress_bar.update()
             progress_bar.complete()
         res = results.get()
-        new_res = []
-        for item in res:
-            new_res.extend(item)
-        new_res.sort(key=lambda x: x[0])
+    new_res = []
+    for item in res:
+        new_res.extend(item)
+    new_res.sort(key=lambda x: x[0])
     return [item[1] for item in new_res]
 
 
-def plate_solve_worker(img_idexes: list[int], header: Header, shm_params: SharedMemoryParams,
-                       reference_stars: np.ndarray, progress_queue: Queue, stop_queue: Optional[Queue] = None
-                       ) -> list[tuple[int, WCS]]:
-    imgs = np.memmap(shm_params.shm_name, dtype=shm_params.shm_dtype, mode='r', shape=shm_params.shm_shape)
-    res = []
-    for img_idx in img_idexes:
-        if stop_queue is not None and not stop_queue.empty():
-            break
-        img = imgs[img_idx]
-        wcs, _ = plate_solve_image(img, header, reference_stars)
-        progress_queue.put(img_idx)
-        res.append((img_idx, wcs))
-    # shm.close()
+def plate_solve_worker(img_indexes: list[int], header: Header, shm_params: SharedMemoryParams,
+                       reference_stars: np.ndarray, progress_queue: Queue, stop_queue: Optional[Queue] = None,
+                       log_queue: Optional[Queue] = None) -> list[tuple[int, WCS]]:
+    handler = QueueHandler(log_queue)
+    logger.log.addHandler(handler)
+    logger.log.debug(f"Load worker started with {len(img_indexes)} images")
+    logger.log.debug(f"Shared memory parameters: {shm_params}")
+    try:
+        imgs = np.memmap(shm_params.shm_name, dtype=shm_params.shm_dtype, mode='r', shape=shm_params.shm_shape)
+        res = []
+        for img_idx in img_indexes:
+            if stop_queue is not None and not stop_queue.empty():
+                break
+            img = imgs[img_idx]
+            wcs, _ = plate_solve_image(img, header, reference_stars)
+            progress_queue.put(img_idx)
+            res.append((img_idx, wcs))
+    except Exception:
+        logger.log.error(f"Plate solve worker failed due to the following error:\n{traceback.format_exc()}")
+        stop_queue.put("ERROR")
+        raise
     return res

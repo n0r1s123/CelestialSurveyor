@@ -88,7 +88,7 @@ class ImagePanel(scrolled.ScrolledPanel):
         return bitmap
 
 
-class ProgressFrame(wx.Frame):
+class ProgressFrame(wx.Dialog):
     def __init__(self, parent, title, stop_event: Event):
         super().__init__(parent=parent, title=title, size=(500, 200))
         self.parent = parent
@@ -104,9 +104,18 @@ class ProgressFrame(wx.Frame):
         sizer.Add(self.cancel_button, 0, wx.ALL | wx.CENTER, 5)
         panel.SetSizer(sizer)
 
+        self.failed = False
+
+    def set_failed(self, value: bool):
+        self.failed = value
+
     def on_cancel(self, event):
-        self.label.SetLabel("Stopping...")
-        self.stop_event.set()
+        if self.failed:
+            self.Close(force=True)
+            self.set_failed(False)
+        else:
+            self.label.SetLabel("Stopping...")
+            self.stop_event.set()
 
 
 class MyFrame(wx.Frame):
@@ -302,6 +311,17 @@ class MyFrame(wx.Frame):
             self.to_debayer.Enable(True)
             self.chk_non_linear.Enable(True)
 
+    def handle_load_error(self, func, message, *args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception:
+            self.progress_frame.label.SetLabel(message)
+            self.progress_frame.label.Update()
+            self.progress_frame.progress.SetValue(0)
+            self.progress_frame.progress.SetRange(0)
+            self.progress_frame.set_failed(True)
+            raise
+
     def on_add_files(self, event):
         wildcard = "Fits files (*.fits)|*.fits;*.FITS;*.fit;*.FIT|XISF files (*.xisf)|*.xisf;*.XISF|All files (*.*)|*.*"
 
@@ -315,13 +335,17 @@ class MyFrame(wx.Frame):
             if self.source_data is None:
                 self.source_data: SourceDataV2 = SourceDataV2()
             self.progress_frame = ProgressFrame(self, "Loading headers...", stop_event=self.source_data.stop_event)
+
             def load_headers():
-                self.source_data.extend_headers(paths, progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
+                self.handle_load_error(
+                    self.source_data.extend_headers, "Failed to load headers", file_list=paths,
+                    progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
                 wx.CallAfter(self.on_header_loaded)
             self.process_thread = threading.Thread(target=load_headers)
             self.progress_frame.Show()
             self.process_thread.start()
         dialog.Destroy()
+
 
     def on_load_files(self, event):
         self.progress_frame = ProgressFrame(self, "Loading progress", stop_event=self.source_data.stop_event)
@@ -371,8 +395,9 @@ class MyFrame(wx.Frame):
 
         def load_images_calibrate_and_align():
             self.progress_frame.label.SetLabel("Loading images...")
-            self.source_data.load_images(progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
-
+            self.handle_load_error(
+                self.source_data.load_images, "Failed to load images",
+                    progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
             master_dark = None
             master_dark_flat = None
             master_flat = None
@@ -380,7 +405,8 @@ class MyFrame(wx.Frame):
                 if dark_path:
                     if os.path.exists(dark_path):
                         self.progress_frame.label.SetLabel("Loading dark...")
-                        master_dark = self.source_data.make_master_dark(
+                        master_dark = self.handle_load_error(
+                            self.source_data.make_master_dark, "Failed to make master dark",
                             self.source_data.make_file_paths(dark_path),
                             progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
                     else:
@@ -389,7 +415,8 @@ class MyFrame(wx.Frame):
                 if dark_flat_path:
                     if os.path.exists(dark_flat_path):
                         self.progress_frame.label.SetLabel("Loading dark flat...")
-                        master_dark_flat = self.source_data.make_master_dark(
+                        master_dark_flat = self.handle_load_error(
+                            self.source_data.make_master_dark, "Failed to make master dark flat",
                             self.source_data.make_file_paths(dark_flat_path),
                             progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
                     else:
@@ -400,7 +427,8 @@ class MyFrame(wx.Frame):
                 if flat_path:
                     if os.path.exists(flat_path):
                         self.progress_frame.label.SetLabel("Loading flats...")
-                        flats = self.source_data.load_flats(
+                        flats = self.handle_load_error(
+                            self.source_data.load_flats, "Failed to load flats",
                             self.source_data.make_file_paths(flat_path),
                             progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
                         if master_dark_flat is not None:
@@ -413,19 +441,22 @@ class MyFrame(wx.Frame):
                 self.source_data.original_frames /= master_flat
             if self.to_align and not self.source_data.stop_event.is_set():
                 self.progress_frame.label.SetLabel("Plate solving...")
-                self.source_data.plate_solve_all(progress_bar=ProgressBarFactory.create_progress_bar(
-                    self.progress_frame.progress))
+                self.handle_load_error(
+                    self.source_data.plate_solve_all, "Failed to plate solve images",
+                    progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
             if self.to_align and not self.source_data.stop_event.is_set():
                 self.progress_frame.label.SetLabel("Aligning images...")
-                self.source_data.align_images_wcs(progress_bar=ProgressBarFactory.create_progress_bar(
-                    self.progress_frame.progress))
+                self.handle_load_error(
+                    self.source_data.align_images_wcs, "Failed to align images",
+                    progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
             if not self.source_data.stop_event.is_set():
                 self.progress_frame.label.SetLabel("Cropping images...")
-                self.source_data.crop_images()
+                self.handle_load_error(self.source_data.crop_images, "Failed to crop images")
             if not self.source_data.stop_event.is_set() and not self.chk_non_linear.GetValue():
                 self.progress_frame.label.SetLabel("Stretching images... ")
-                self.source_data.stretch_images(progress_bar=ProgressBarFactory.create_progress_bar(
-                    self.progress_frame.progress))
+                self.handle_load_error(
+                    self.source_data.stretch_images, "Failed to stretch images",
+                    progress_bar=ProgressBarFactory.create_progress_bar(self.progress_frame.progress))
             if not self.source_data.stop_event.is_set():
                 self.source_data.images_from_buffer()
             else:

@@ -1,7 +1,7 @@
 import astropy.io.fits
 import cv2
 import numpy as np
-
+import traceback
 
 from xisf import XISF
 from multiprocessing import Queue, cpu_count, Pool, Manager
@@ -13,6 +13,7 @@ from logger.logger import get_logger
 from backend.data_classes import SharedMemoryParams
 from threading import Event
 from backend.consuming_functions.measure_execution_time import measure_execution_time
+from logging.handlers import QueueHandler
 
 
 PIXEL_TYPE = np.float32
@@ -77,7 +78,12 @@ def load_image(file_path: str, to_debayer: bool = False) -> np.ndarray:
 
 
 def load_worker(indexes: list[int], file_list: list[str], shm_params: SharedMemoryParams, progress_queue: Queue,
-                to_debayer: bool = False, stop_queue: Optional[Queue] = None) -> None:
+                to_debayer: bool = False, stop_queue: Optional[Queue] = None, log_queue: Optional[Queue] = None
+                ) -> None:
+    handler = QueueHandler(log_queue)
+    logger.log.addHandler(handler)
+    logger.log.debug(f"Load worker started with {len(indexes)} images")
+    logger.log.debug(f"Shared memory parameters: {shm_params}")
     try:
         imgs = np.memmap(shm_params.shm_name, dtype=PIXEL_TYPE, mode='r+', shape=shm_params.shm_shape)
         for img_idx in indexes:
@@ -86,21 +92,25 @@ def load_worker(indexes: list[int], file_list: list[str], shm_params: SharedMemo
             img_data = load_image(file_list[img_idx], to_debayer)
             imgs[img_idx] = img_data
             progress_queue.put(img_idx)
-            imgs.flush()
-    except:
-        import traceback
-        traceback.print_exc()
+
+    except Exception:
+        logger.log.error(f"Load worker failed due to the following error:\n{traceback.format_exc()}")
+        stop_queue.put("ERROR")
+        raise
 
 
 @measure_execution_time
 def load_images(file_list: list[str], shm_params: SharedMemoryParams, to_debayer: bool = False,
-                progress_bar: Optional[AbstractProgressBar] = None, stop_event: Optional[Event] = None) -> None:
+                progress_bar: Optional[AbstractProgressBar] = None, stop_event: Optional[Event] = None):
+
     available_cpus = cpu_count()
     used_cpus = min(available_cpus, len(file_list))
     with (Pool(processes=used_cpus) as pool):
         m = Manager()
         progress_queue = m.Queue()
-        stop_queue = m.Queue(maxsize=1)
+        log_queue = m.Queue()
+        logger.start_process_listener(log_queue)
+        stop_queue = m.Queue()
         results = pool.map_async(
             partial(
                 load_worker,
@@ -108,7 +118,8 @@ def load_images(file_list: list[str], shm_params: SharedMemoryParams, to_debayer
                 shm_params=shm_params,
                 to_debayer=to_debayer,
                 progress_queue=progress_queue,
-                stop_queue=stop_queue
+                stop_queue=stop_queue,
+                log_queue=log_queue
             ),
             np.array_split(np.arange(len(file_list)), used_cpus))
         if progress_bar is not None:
@@ -117,10 +128,19 @@ def load_images(file_list: list[str], shm_params: SharedMemoryParams, to_debayer
                 if stop_event is not None and stop_event.is_set():
                     stop_queue.put(True)
                     break
-                img_idx = progress_queue.get()
-                logger.log.debug(f"Loaded image '{file_list[img_idx]}' at index '{img_idx}'")
+
+                got_result = False
+                while not got_result:
+                    if not progress_queue.empty():
+                        progress_queue.get()
+                        got_result = True
+                    if not stop_queue.empty():
+                        break
+                if not stop_queue.empty():
+                    break
                 progress_bar.update()
             progress_bar.complete()
         results.get()
         pool.close()
         pool.join()
+        logger.stop_process_listener()

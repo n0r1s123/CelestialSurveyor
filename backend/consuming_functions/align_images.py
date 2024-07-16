@@ -1,4 +1,7 @@
 import numpy as np
+import traceback
+
+from logging.handlers import QueueHandler
 from multiprocessing import Queue, cpu_count, Pool, Manager
 from typing import Optional
 from functools import partial
@@ -10,7 +13,7 @@ from astropy.wcs import WCS
 from reproject import reproject_interp
 from threading import Event
 from backend.consuming_functions.measure_execution_time import measure_execution_time
-from numba import jit
+
 
 logger = get_logger()
 
@@ -27,9 +30,11 @@ def align_images_wcs(shm_params: SharedMemoryParams, all_wcses: list[WCS],
         m = Manager()
         progress_queue = m.Queue()
         stop_queue = m.Queue(maxsize=1)
+        log_queue = m.Queue()
+        logger.start_process_listener(log_queue)
         results = pool.map_async(
             partial(align_wcs_worker, shm_params=shm_params, progress_queue=progress_queue, ref_wcs=all_wcses[0],
-                    all_wcses=all_wcses, stop_queue=stop_queue),
+                    all_wcses=all_wcses, stop_queue=stop_queue, log_queue=log_queue),
             np.array_split(np.arange(frames_num), used_cpus))
 
         if progress_bar is not None:
@@ -57,20 +62,24 @@ def align_images_wcs(shm_params: SharedMemoryParams, all_wcses: list[WCS],
         footprint_map = np.array([item[2] for item in res])
         pool.close()
         pool.join()
+        logger.stop_process_listener()
     return success_map, footprint_map
 
 
 def align_wcs_worker(img_indexes: list[int], shm_params: SharedMemoryParams, progress_queue: Queue, ref_wcs: WCS,
-                     all_wcses: list[WCS], stop_queue: Optional[Queue] = None
+                     all_wcses: list[WCS], stop_queue: Optional[Queue] = None, log_queue: Optional[Queue] = None
                      ) -> tuple[list[int], list[bool], list[np.ndarray]]:
     imgs = np.memmap(shm_params.shm_name, dtype=shm_params.shm_dtype, mode='r+', shape=shm_params.shm_shape)
     footprints = []
     successes = []
+    handler = QueueHandler(log_queue)
+    logger.log.addHandler(handler)
+    logger.log.debug(f"Align worker started with {len(img_indexes)} images")
+    logger.log.debug(f"Shared memory parameters: {shm_params}")
     for img_idx in img_indexes:
         if stop_queue is not None and not stop_queue.empty():
             break
         try:
-
             # TODO: Think how to save memory
             _, footprint = reproject_interp(
                 (np.reshape(np.copy(imgs[img_idx]), shm_params.shm_shape[1:3]),
@@ -80,9 +89,11 @@ def align_wcs_worker(img_indexes: list[int], shm_params: SharedMemoryParams, pro
                 output_array=imgs[img_idx],
             )
             imgs.flush()
-        except Exception as e:
+        except Exception:
             footprint = np.ones(shm_params.shm_shape[1:], dtype=bool)
             success = False
+            logger.log.error(f"Align worker failed to process image at index "
+                             f"'{img_idx}' due to the following error:\n{traceback.format_exc()}")
         else:
             success = True
             footprint = 1 - footprint
@@ -91,4 +102,5 @@ def align_wcs_worker(img_indexes: list[int], shm_params: SharedMemoryParams, pro
         successes.append(success)
 
         progress_queue.put(img_idx)
+    logger.log.removeHandler(handler)
     return img_indexes, successes, footprints
