@@ -51,6 +51,8 @@ def stretch_images(shm_params: SharedMemoryParams,
                 progress_bar.update()
             progress_bar.complete()
         results.get()
+        pool.close()
+        pool.join()
         logger.stop_process_listener()
 
 

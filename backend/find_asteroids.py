@@ -23,7 +23,7 @@ logger = get_logger()
 
 def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[AbstractProgressBar] = None,
                       model_path: Optional[str] = None):
-
+    logger.log.info("Finding moving objects...")
     model_path = get_model_path() if model_path is None else model_path
     logger.log.info(f"Loading model: {model_path}")
     model = decrypt_model(model_path)
@@ -32,6 +32,7 @@ def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[Abstract
     batch_generator = source_data.generate_batch(chunk_generator, batch_size=batch_size)
     ys, xs = source_data.get_number_of_chunks()
     progress_bar_len = len(ys) * len(xs)
+    progress_bar_len = progress_bar_len // batch_size + 1 if progress_bar_len % batch_size != 0 else 0
 
     if progress_bar:
         progress_bar.set_total(progress_bar_len)
@@ -50,6 +51,7 @@ def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[Abstract
 
 
 def save_results(source_data: SourceDataV2, results, output_folder):
+    logger.log.info("Saving results...")
     max_image = np.copy(source_data.max_image) * 255.
     max_image = cv2.cvtColor(max_image, cv2.COLOR_GRAY2BGR)
     gif_size = 5
@@ -95,6 +97,7 @@ def save_results(source_data: SourceDataV2, results, output_folder):
 
 
 def annotate_results(source_data: SourceDataV2, img_to_be_annotated: np.ndarray, output_folder: str, magnitude_limit: float):
+    logger.log.info("Annotating results...")
     start_session_frame_nums = [0]
 
     start_ts = source_data.headers[0].timestamp

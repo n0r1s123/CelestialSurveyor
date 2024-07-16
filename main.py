@@ -3,19 +3,22 @@ if __name__ == '__main__':
 
     import argparse
     import os
-    import tqdm
+    # import tqdm
 
     # from backend.find_asteroids import find_asteroids
-    from backend.source_data import SourceData, get_file_paths
+    # from backend.source_data import SourceData, get_file_paths
+    from backend.progress_bar import ProgressBarCli
+    from backend.source_data_v2 import SourceDataV2
     from user_interface.main_window import start_ui
     from logger.logger import get_logger
     from backend.progress_bar import ProgressBarFactory
     import multiprocessing
+    from backend.find_asteroids import predict_asteroids, save_results, annotate_results
 
     logger = get_logger()
 
     multiprocessing.freeze_support()
-    version = "0.2.1"
+    version = "0.3.0"
     arg_parser = argparse.ArgumentParser(
         prog='CelestialSurveyor',
         description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '
@@ -41,22 +44,11 @@ if __name__ == '__main__':
                             help='Provide this key if the images are not in linear state')
     arg_parser.add_argument('-d', '--debayer', dest='debayer', action="store_true", required=False, default=False,
                             help='Debayer color FIT images if required')
-    arg_parser.add_argument('-a', '--initial_alignment', dest='initial_alignment', action="store_true", required=False,
+    arg_parser.add_argument('-a', '--align', dest='align_images', action="store_true", required=False,
                             default=False, help='Do image alignment when loading')
-    arg_parser.add_argument('--not_skip_bad', dest='not_skip_bad', action="store_true", required=False,
-                            default=False, help='App will finish execution if there are images failed to '
-                                                'be aligned in case if this key is provided. Otherwise they will be '
-                                                'skipped')
-    arg_parser.add_argument('--secondary_alignment', dest='secondary_alignment', action="store_true", required=False,
-                            default=False, help='Do secondary alignment. Helpful when there are rotation between '
-                                                'frames. In this case each image will be split by x_splits*y_splits '
-                                                'plates and aligned respectively')
-    arg_parser.add_argument('--x_splits', dest='x_splits', type=int, default=1, required=False,
-                            help='Number of X-splits. Check "--secondary_alignment" key')
-    arg_parser.add_argument('--y_splits', dest='y_splits', type=int, default=1, required=False,
-                            help='Number of Y-splits. Check "--secondary_alignment" key')
     arg_parser.add_argument('-v', '--version', dest='version', action="store_true", required=False,
                             help='Display version of this app.')
+    arg_parser.add_argument('-ml', '--magnitude_limit', dest='magnitude_limit', type=float, required=False, default='18.0')
     provided_args = arg_parser.parse_args()
     if provided_args.version:
         print(f"CelestialSurveyor v{version}")
@@ -76,30 +68,43 @@ if __name__ == '__main__':
             if not os.path.exists(provided_args.model_path):
                 logger.log.error(f"Provided model path {provided_args.model_path} does not exist")
                 sys.exit(0)
+        if provided_args.magnitude_limit >= 25.0:
+            logger.log.error(
+                f"Provided magnitude limit {provided_args.magnitude_limit} is too high. Maximum value is 25.0")
+            sys.exit(0)
+        if provided_args.model_path != "default" and not os.path.exists(provided_args.model_path):
+            logger.log.error(f"Provided model path {provided_args.model_path} does not exist")
+            sys.exit(0)
+        if provided_args.flat_folder is not None and not os.path.exists(provided_args.flat_folder):
+            logger.log.error(f"Provided flat folder {provided_args.flat_folder} does not exist")
+            sys.exit(0)
+        if provided_args.dark_folder is not None and not os.path.exists(provided_args.dark_folder):
+            logger.log.error(f"Provided dark folder {provided_args.dark_folder} does not exist")
+            sys.exit(0)
+        if provided_args.dark_flat_folder is not None and not os.path.exists(provided_args.dark_flat_folder):
+            logger.log.error(f"Provided dark flat folder {provided_args.dark_flat_folder} does not exist")
+            sys.exit(0)
+        source_data = SourceDataV2(provided_args.debayer)
+        img_paths = source_data.make_file_paths(provided_args.source_folder)
+        source_data.extend_headers(file_list=img_paths)
+        source_data.load_images(progress_bar=ProgressBarCli())
+        source_data.calibrate_images(
+            dark_files=source_data.make_file_paths(provided_args.dark_folder),
+            flat_files=source_data.make_file_paths(provided_args.flat_folder),
+            dark_flat_files=source_data.make_file_paths(provided_args.dark_flat_folder),
+            progress_bar=ProgressBarCli())
+        if provided_args.align_images:
+            source_data.plate_solve_all(progress_bar=ProgressBarCli())
+            source_data.align_images_wcs(progress_bar=ProgressBarCli())
+        source_data.crop_images()
+        if not provided_args.non_linear:
+            source_data.stretch_images(progress_bar=ProgressBarCli())
+        source_data.images_from_buffer()
 
-        progress_bar = tqdm.tqdm()
-        source_data = SourceData(
-            file_list=get_file_paths(provided_args.source_folder),
-            non_linear=provided_args.non_linear,
-            to_align=provided_args.initial_alignment,
-            to_skip_bad=not provided_args.not_skip_bad,
-            num_from_session=None,
-            dark_folder=provided_args.dark_folder,
-            flat_folder=provided_args.flat_folder,
-            dark_flat_folder=provided_args.dark_flat_folder,
-            to_debayer=provided_args.debayer,
+        results = predict_asteroids(source_data, model_path=provided_args.model_path, progress_bar=ProgressBarCli())
+        image_to_annotate = save_results(source_data=source_data, results=results,
+                                         output_folder=provided_args.output_folder)
 
-        )
-        source_data.load_headers_and_sort()
-        source_data.load_images(
-            progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm()),
-        )
-        # find_asteroids(
-        #     source_data=source_data,
-        #     use_img_mask=None,
-        #     output_folder=provided_args.output_folder,
-        #     secondary_alignment=provided_args.secondary_alignment,
-        #     y_splits=provided_args.y_splits,
-        #     x_splits=provided_args.x_splits,
-        #     progress_bar=ProgressBarFactory.create_progress_bar(tqdm.tqdm())
-        # )
+        magnitude_limit = float(provided_args.magnitude_limit)
+        annotate_results(source_data, image_to_annotate, provided_args.output_folder, magnitude_limit=magnitude_limit)
+        logger.log.info(f"Results are saved in {provided_args.output_folder}")

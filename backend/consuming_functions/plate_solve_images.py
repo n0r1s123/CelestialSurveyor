@@ -89,6 +89,9 @@ def plate_solve(shm_params: SharedMemoryParams, headers: list[Header],
                 progress_bar.update()
             progress_bar.complete()
         res = results.get()
+    pool.close()
+    pool.join()
+    logger.stop_process_listener()
     new_res = []
     for item in res:
         new_res.extend(item)

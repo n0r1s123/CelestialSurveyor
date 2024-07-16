@@ -319,37 +319,9 @@ class SourceDataV2:
         x_borders = np.array(x_borders)
         self.y_borders = slice(int(np.max(y_borders[:, 0])), int(np.min(y_borders[:, 1])))
         self.x_borders = slice(int(np.max(x_borders[:, 0])), int(np.min(x_borders[:, 1])))
-        print(self.y_borders, self.x_borders)
         self.__cropped = True
         self.footprint_map = None
-        # self.wcs, _ = self.plate_solve(0)
-
-    # def secondary_align_images(self, y_splits: int = 3, x_splits: int = 3,
-    #                            progress_bar: Optional[AbstractProgressBar] = None) -> None:
-    #     logger.log.info(f"Secondary aligning images with {y_splits} x {x_splits} splits")
-    #     y_step = (self.y_borders.stop - SECONDARY_ALIGNMENT_OFFSET - self.y_borders.start -
-    #               SECONDARY_ALIGNMENT_OFFSET) // y_splits
-    #     y_slices = range(self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET,
-    #                      self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET + y_step * y_splits, y_step)
-    #     y_slices = [slice(item, item + y_step) for item in y_slices]
-    #     x_step = (self.x_borders.stop - SECONDARY_ALIGNMENT_OFFSET - self.x_borders.start -
-    #               SECONDARY_ALIGNMENT_OFFSET) // x_splits
-    #     x_slices = range(self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET,
-    #                      self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET + x_step * x_splits, x_step)
-    #     x_slices = [slice(item, item + x_step) for item in x_slices]
-    #     for num_y, y_slice in enumerate(y_slices):
-    #         for num_x, x_slice in enumerate(x_slices, start=1):
-    #             progress_bar.clear()
-    #             logger.log.info(f"Secondary aligning images part {num_y*y_splits + num_x} of {y_splits * x_splits}")
-    #             shm_params = self.shm_params
-    #             shm_params.y_slice = y_slice
-    #             shm_params.x_slice = x_slice
-    #             align_images(shm_params, progress_bar=progress_bar)
-    #
-    #     self.y_borders = slice(self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET,
-    #                            self.y_borders.start + SECONDARY_ALIGNMENT_OFFSET + y_step * y_splits)
-    #     self.x_borders = slice(self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET,
-    #                            self.x_borders.start + SECONDARY_ALIGNMENT_OFFSET + x_step * x_splits)
+        self.wcs, _ = self.plate_solve(0)
 
     def make_master_dark(self, filenames: list[str], progress_bar: Optional[AbstractProgressBar] = None) -> np.ndarray:
         shape = (len(filenames), *self.origional_shape[1:])
