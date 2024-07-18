@@ -672,7 +672,8 @@ class MyFrame(wx.Frame):
         Returns:
             None
         """
-        self.progress_frame = ProgressFrame(self, "Finding moving objects", stop_event=self.source_data.stop_event)
+        # self.progress_frame = ProgressFrame(self, "Finding moving objects", stop_event=self.source_data.stop_event)
+        self.progress_frame.label.SetLabel("Finding moving objects...")
         self.progress_frame.progress.SetValue(0)
         output_folder = self.results_path_picker.GetPath()
         objects = self.checkbox_list.GetObjects()

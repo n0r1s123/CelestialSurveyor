@@ -2,12 +2,20 @@
 
 block_cipher = None
 
+from PyInstaller.utils.hooks import copy_metadata
+
+datas = []
+datas += copy_metadata('xisf')
+datas += copy_metadata('twirl')
+datas += copy_metadata('astroquery')
+datas += copy_metadata('tensorflow')
+
 a = Analysis(
     ['main.py'],
     pathex=['/mnt/object_recognition'],
-    binaries=[('./model/model161.bin', './')],
-    datas=[],
-    hiddenimports=[],
+    binaries=[('./model/model161.bin', './'), ('.\\backend\\astroquery\\CITATION', '.\\astroquery')],
+    datas=datas,
+    hiddenimports=['astroquery'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
