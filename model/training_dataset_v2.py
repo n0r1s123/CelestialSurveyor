@@ -1,33 +1,43 @@
+import cv2
+import datetime
+import json
 import numba
 import numpy as np
 import os
+import random
 import sys
 import tifffile
-import random
-from PIL import Image
-from decimal import Decimal
-from typing import Sequence
-from logger.logger import get_logger
+
+
 from dataclasses import dataclass
-import datetime
-from bs4 import BeautifulSoup
-from typing import Optional
-import cv2
-import json
-from backend.consuming_functions.measure_execution_time import measure_execution_time
-import time
+from decimal import Decimal
+from PIL import Image
+from typing import Optional, Sequence, Generator
 
 from backend.source_data_v2 import SourceDataV2, CHUNK_SIZE
+from logger.logger import get_logger
 
 
 logger = get_logger()
-
 
 MIN_TOTAL_MOVEMENT = 5  # px
 
 
 @dataclass
 class RandomObject:
+    """
+    Represents a random object to be drawn on the image series.
+
+    Attributes:
+        start_y (int): The starting y-coordinate of the object.
+        start_x (int): The starting x-coordinate of the object.
+        start_frame_idx (int): The starting frame index of the object.
+        movement_vector (np.ndarray): The movement vector of the object.
+        brightness_above_noize (float): The brightness level above noise.
+        star_sample (np.ndarray): The sample of the star.
+        exposure (Decimal): The exposure value of the object.
+        timestamps (Sequence[datetime.datetime]): The timestamps associated with the object.
+    """
     start_y: int
     start_x: int
     start_frame_idx: int
@@ -35,18 +45,21 @@ class RandomObject:
     brightness_above_noize: float
     star_sample: np.ndarray
     exposure: Decimal
-    timestamps: Sequence[datetime.datetime]
+    timestamps: list[datetime.datetime]
 
 
 class TrainingSourceDataV2(SourceDataV2):
+    """
+    Class to manage image data. One instance of this class manages one object captured.
+    There are some methods to generate synthetic data for AI model training.
+    """
+
     SAMPLES_FOLDER = os.path.join(sys.path[1], "star_samples")
     OBJ_TYPE_STAR = "star"
     OBJ_TYPE_ALL = "all"
     OBJ_TYPE_COMET = "comet"
 
     def __init__(self, to_debayer: bool = False, number_of_images: Optional[int] = None) -> None:
-        # file_list = file_list[:number_of_images]
-
         super().__init__(to_debayer)
         self.number_of_images = number_of_images
         self.exclusion_boxes = []
@@ -55,10 +68,18 @@ class TrainingSourceDataV2(SourceDataV2):
 
     @classmethod
     def _load_star_samples(cls) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        """
+        Loads star and comet samples from the SAMPLES_FOLDER directory.
+
+        Returns:
+        Tuple containing a list of star samples and a list of comet samples, both as numpy arrays.
+        """
         file_list_stars = [
-            os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER) if ".tif" in item.lower() and "star" in item.lower()]
+            os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER)
+            if ".tif" in item.lower() and "star" in item.lower()]
         file_list_comets = [
-            os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER) if ".tif" in item.lower() and "comet" in item.lower()]
+            os.path.join(cls.SAMPLES_FOLDER, item) for item in os.listdir(cls.SAMPLES_FOLDER)
+            if ".tif" in item.lower() and "comet" in item.lower()]
         star_samples = [np.array(tifffile.tifffile.imread(item)) for item in file_list_stars]
         comet_samples = [np.array(tifffile.tifffile.imread(item)) for item in file_list_comets]
         for num, sample in enumerate(star_samples):
@@ -85,7 +106,13 @@ class TrainingSourceDataV2(SourceDataV2):
 
         return star_samples, comet_samples
 
-    def __get_exclusion_boxes_paths(self):
+    def __get_exclusion_boxes_paths(self) -> list[str]:
+        """
+        Get the paths of exclusion boxes files based on the directories of the headers.
+
+        Returns:
+        List of paths to exclusion boxes files.
+        """
         folders = {os.path.dirname(header.file_name) for header in self.headers}
         exclusion_boxes_files = []
         for folder in folders:
@@ -93,7 +120,20 @@ class TrainingSourceDataV2(SourceDataV2):
                 exclusion_boxes_files.append(os.path.join(folder, "exclusion_boxes.json"))
         return exclusion_boxes_files
 
-    def load_exclusion_boxes(self, force_rebuild: bool = False, magnitude_limit: float = 18.0):
+    def load_exclusion_boxes(self, force_rebuild: bool = False, magnitude_limit: float = 18.0) -> None:
+        """
+        Loads exclusion. Exclusion boxes contain real asteroids in the training data.
+        These boxes shouldn't be used for training due to we cannot say if there was synthetic object drawn.
+
+        Parameters:
+        - force_rebuild: bool, optional, default is False
+            If True, forces a rebuild of the exclusion boxes.
+        - magnitude_limit: float, optional, default is 18.0
+            The magnitude limit for exclusion boxes.
+
+        Returns:
+        None
+        """
         all_boxes = []
         file_paths = self.__get_exclusion_boxes_paths()
         if len(file_paths) > 0 and not force_rebuild:
@@ -107,9 +147,19 @@ class TrainingSourceDataV2(SourceDataV2):
         else:
             logger.log.info("Making exclusion boxes...")
             self.make_exclusion_boxes(magnitude_limit=magnitude_limit)
-        # self.show_exclusion_boxes()
 
-    def make_exclusion_boxes(self, magnitude_limit: float = 18.0):
+    def make_exclusion_boxes(self, magnitude_limit: float = 18.0) -> None:
+        """
+        Create exclusion boxes. It requests the list of known objects for the first image of each imaging session.
+        Creates JSON file with the exclusion boxes not to request them again.
+
+        Parameters:
+        - magnitude_limit: float, optional, default is 18.0
+            The magnitude limit for exclusion boxes.
+
+        Returns:
+        None
+        """
         start_session_idx = 0
         session_timestamps = []
         exclusion_boxes = []
@@ -147,16 +197,25 @@ class TrainingSourceDataV2(SourceDataV2):
         exclusion_boxes = np.array(exclusion_boxes)
         self.exclusion_boxes = exclusion_boxes
 
-    def show_exclusion_boxes(self):
+    def show_exclusion_boxes(self) -> None:
+        """
+        Display exclusion boxes on an image. (Debug method)
+        """
         max_image = np.copy(self.max_image)
         max_image = cv2.cvtColor(max_image, cv2.COLOR_GRAY2BGR)
         for xlt, ylt, xbr, ybr in self.exclusion_boxes:
             max_image = cv2.rectangle(max_image, (xlt, ylt), (xbr, ybr), (255, 0, 0), 3)
         small = cv2.resize(max_image, (0, 0), fx=0.4, fy=0.4)
-        cv2.imshow("lalala", small)
+        cv2.imshow("Exclusion boxes", small)
         cv2.waitKey(0)
 
-    def get_random_shrink(self):
+    def get_random_shrink(self) -> np.ndarray:
+        """
+        Generate a random image chunk that does not overlap with exclusion boxes.
+
+        Returns:
+        Numpy array representing the random image chunk.
+        """
         generated = False
         while not generated:
             y = random.randint(0, self.shape[1] - CHUNK_SIZE)
@@ -171,19 +230,62 @@ class TrainingSourceDataV2(SourceDataV2):
                 return res
 
     @staticmethod
-    def insert_star_by_coords(image, star, coords):
+    def insert_star_by_coords(image: np.ndarray, star: np.ndarray, coords: tuple[int, int]) -> np.ndarray:
+        """
+        Inserts a sample of the star onto another image at specified coordinates.
+
+        Args:
+        image (np.ndarray): The image to insert the star image into.
+        star (np.ndarray): The star image to be inserted.
+        coords (tuple[int, int]): The coordinates to place the star image.
+
+        Returns:
+        np.ndarray: The image with the star image inserted.
+        """
         return insert_star_by_coords(image, star, coords)
 
     @classmethod
-    def calculate_star_form_on_single_image(cls, image, star, start_coords, movement_vector, exposure_time=None):
+    def calculate_star_form_on_single_image(
+            cls, image: np.ndarray, star: np.ndarray, start_coords: tuple[int, int],
+            movement_vector: np.ndarray, exposure_time: Optional[Decimal] = None) -> np.ndarray:
+        """
+        Calculate the form of a star sample on a single image based on the star sample, coordinates, movement vector,
+        and exposure time. The idea is to emulate object sample movement during the single exposure.
+
+        Args:
+            image (np.ndarray): The image to insert the star form into.
+            star (np.ndarray): The star sample image to be inserted.
+            start_coords (Tuple[int, int]): The starting coordinates to place the star image.
+            movement_vector (np.ndarray): The movement vector of the star image.
+            exposure_time (Optional[float], optional): The exposure time of the image. Defaults to None.
+
+        Returns:
+            np.ndarray: The image with the star form inserted.
+        """
         return calculate_star_form_on_single_image(image, star, start_coords, movement_vector, exposure_time)
 
-    def generate_timestamps(self):
+    def generate_timestamps(self) -> tuple[list[datetime.datetime], Decimal]:
+        """
+        Generate random timestamps emulating timestamps of observation sessions.
+
+        Returns:
+            Tuple: A tuple containing a list of generated timestamps and a random exposure time.
+        """
         timestamps, exposure = generate_timestamps(len(self.images))
+        exposure = Decimal(exposure)
         timestamps = [datetime.datetime.utcfromtimestamp(ts) for ts in timestamps]
         return timestamps, exposure
 
-    def generate_random_objects(self, obj_type="star"):
+    def generate_random_objects(self, obj_type: str = "star") -> RandomObject:
+        """
+        Generates random objects based on the provided object type.
+
+        Parameters:
+            obj_type (str): The type of object to generate ("star" or "comet"). Default is "star".
+
+        Returns:
+            RandomObject: An object containing the generated random properties.
+        """
         if obj_type == self.OBJ_TYPE_STAR:
             samples = self.star_samples
         elif obj_type == self.OBJ_TYPE_COMET:
@@ -193,19 +295,30 @@ class TrainingSourceDataV2(SourceDataV2):
         else:
             raise ValueError(f"Unknown object type: {obj_type}")
 
-        start_y, start_x, start_frame_idx, movement_vector, brightness_above_noize, star_sample, exposure, timestamps = generate_random_objects(len(self.images), samples)
+        (start_y, start_x, start_frame_idx, movement_vector, brightness_above_noize, star_sample, exposure, timestamps
+         ) = generate_random_objects(len(self.images), samples)
         timestamps = [datetime.datetime.utcfromtimestamp(ts) for ts in timestamps]
-        return RandomObject(start_y, start_x, start_frame_idx, movement_vector, brightness_above_noize, star_sample, exposure, timestamps)
+        return RandomObject(start_y, start_x, start_frame_idx, movement_vector,
+                            brightness_above_noize, star_sample, Decimal(exposure), timestamps)
 
-    # @measure_execution_time
-    def draw_object_on_image_series_numpy(self, rand_obg):
+    def draw_object_on_image_series_numpy(self, rand_obg: RandomObject) -> tuple[np.ndarray, int]:
+        """
+        Draws a random object on a random image series. The idea is to emulate object sample movement on the image
+            series.
+        We choose random object sample, random movement vector (in pixels per hour), and random exposure time.
+        Then we need to draw the object on the image series taking in account timestamps and exposure time.
+
+        Args:
+            rand_obg (RandomObject): The random object to draw on the image series.
+
+        Returns:
+            np.ndarray: The image series with the random object drawn on it.
+        """
         imgs = self.get_random_shrink()
         imgs = np.reshape(np.copy(imgs), (imgs.shape[:3]))
         old_images = np.copy(imgs)
         drawn = 0
-
         while not drawn:
-            result = []
             noise_level = self.estimate_image_noize_level(imgs)
             signal_space = 1 - noise_level
             expected_star_max = signal_space * rand_obg.brightness_above_noize + noise_level
@@ -214,6 +327,13 @@ class TrainingSourceDataV2(SourceDataV2):
             star_img = rand_obg.star_sample * multiplier
 
             movement_vector = rand_obg.movement_vector
+
+            # Here we solve the problem object coordinates and movement vector selection to guarantee that the object
+            # will appear in the series. Instead of choosing coordinates on the first image and calculating possible
+            # movement vector - we choose coordinates on the image in the middle of the series, choose random movement
+            # vector and insert it on each emage from the middle to the beginning and from the middle to the end.
+
+            # Draw the object on the image series moving backwards from the start frame to the beginning of the series.
             to_beginning_slice = slice(None, rand_obg.start_frame_idx)
             start_ts = rand_obg.timestamps[rand_obg.start_frame_idx]
             for img, timestamp in zip(
@@ -227,12 +347,11 @@ class TrainingSourceDataV2(SourceDataV2):
                 if x + star_img.shape[1] < 0 or x - star_img.shape[1] > img.shape[1]:
                     break
 
-                new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, rand_obg.exposure)
+                new_img = self.calculate_star_form_on_single_image(
+                    img, star_img, (y, x), movement_vector, rand_obg.exposure)
                 img[:] = new_img
-                # result.append(new_img)
 
-            # result = result[::-1]
-
+            # Draw the object on the image series moving from the start frame to the end of the series.
             to_end_slice = slice(rand_obg.start_frame_idx, None, None)
             for img, timestamp in zip(
                     imgs[to_end_slice],
@@ -244,10 +363,9 @@ class TrainingSourceDataV2(SourceDataV2):
                     break
                 if x + star_img.shape[1] < 0 or x - star_img.shape[1] > img.shape[1]:
                     break
-                new_img = self.calculate_star_form_on_single_image(img, star_img, (y, x), movement_vector, rand_obg.exposure)
+                new_img = self.calculate_star_form_on_single_image(
+                    img, star_img, (y, x), movement_vector, rand_obg.exposure)
                 img[:] = new_img
-                # result.append(new_img)
-            # result = np.array(result)
             result = imgs
 
             drawn = 1
@@ -256,10 +374,17 @@ class TrainingSourceDataV2(SourceDataV2):
                 rand_obg = self.generate_random_objects(self.OBJ_TYPE_ALL)
         return result, drawn
 
-    def draw_variable_star(self, rand_obj):
+    def draw_variable_star(self, rand_obj: RandomObject) -> tuple[np.ndarray, int]:
+        """
+        Emulates variable stars on image series.
+
+        Note: For future debugging. Is not used in the current implementation.
+        """
+        raise NotImplementedError("This function needs to be reviewed and refactored.")
+        # TODO: Refactor
         imgs = np.copy(self.get_random_shrink())
         old_images = np.copy(imgs)
-        # TODO: Refactor
+
         original_timestamps = rand_obj.timestamps
         timestamps = [0.] + [(item - original_timestamps[0]).total_seconds(
         ) for num, item in enumerate(original_timestamps)]
@@ -270,7 +395,6 @@ class TrainingSourceDataV2(SourceDataV2):
         y_shape, x_shape = imgs[0].shape[:2]
         y = random.randint(0, y_shape - 1)
         x = random.randint(0, x_shape - 1)
-        # star_img = random.choice(self.object_samples)
         star_img = self.star_samples[-1]
         star_brightness = np.max(star_img)
         for num, (img, ts) in enumerate(zip(imgs, timestamps)):
@@ -287,7 +411,16 @@ class TrainingSourceDataV2(SourceDataV2):
         return imgs, drawn
 
     # @measure_execution_time
-    def draw_one_image_artefact(self, imgs):
+    def draw_one_image_artefact(self, imgs: np.ndarray) -> np.ndarray:
+        """
+        Draws one image artefact. Something like cosmic rays or satellite/airplane tracks.
+
+        Args:
+            imgs (np.ndarray): The input images.
+
+        Returns:
+            np.ndarray: The modified images.
+        """
         number_of_artefacts = random.choice(list(range(1, 5)) + [0] * 10)
         for _ in range(number_of_artefacts):
             y_shape, x_shape = imgs[0].shape[:2]
@@ -318,10 +451,18 @@ class TrainingSourceDataV2(SourceDataV2):
                 imgs[start_image_idx], star_img, (y, x), - movement_vector, 10000)
         return imgs
 
-
     @staticmethod
-    # @measure_execution_time
-    def draw_hot_pixels(imgs, dead=False):
+    def draw_hot_pixels(imgs: np.ndarray, dead: bool = False) -> np.ndarray:
+        """
+        Draws hot pixels on the images.
+
+        Args:
+            imgs: The images to draw hot pixels on.
+            dead (bool): If True, sets the pixel value to 0, otherwise adjusts brightness.
+
+        Returns:
+            np.ndarray: The images with hot pixels drawn on them.
+        """
         imgs = np.copy(imgs)
         probablity = random.randrange(10, 51)
         brightness = random.randrange(90, 101) / 100.
@@ -336,20 +477,28 @@ class TrainingSourceDataV2(SourceDataV2):
         result = np.array(result)
         return result
 
-    # @measure_execution_time
-    def draw_hot_stars(self, imgs):
+    def draw_hot_stars(self, imgs: np.ndarray) -> np.ndarray:
+        """
+        Draws hot stars on the images. Like it's done in draw_hot_pixels function, but for object samples,
+        not for single pixels.
+
+        Args:
+            imgs: The images to draw hot stars on.
+
+        Returns:
+            np.ndarray: The images with hot stars drawn on them.
+        """
         imgs = np.copy(imgs)
-        probablity = random.randrange(10, 51)
+        probability = random.randrange(10, 51)
         brightness = random.randrange(80, 101) / 100.
         star_img = random.choice(self.star_samples)
         star_img *= brightness / np.amax(star_img)
         result = []
         for img in imgs:
-            if random.randrange(1, 101) < probablity:
+            if random.randrange(1, 101) < probability:
                 y_shape, x_shape = imgs[0].shape[:2]
                 y = random.randint(0, y_shape - 1)
                 x = random.randint(0, x_shape - 1)
-                # img[y, x] = 0 if dead else brightness
                 img = self.insert_star_by_coords(img, star_img, (y, x))
             result.append(img)
         result = np.array(result)
@@ -357,10 +506,23 @@ class TrainingSourceDataV2(SourceDataV2):
 
 
 class TrainingDatasetV2:
+    """
+    Represents all the data used for training the model.
+    """
     def __init__(self, source_datas: Sequence[TrainingSourceDataV2]):
         self.source_datas = source_datas
 
-    def make_series(self, source_data: TrainingSourceDataV2):
+    @staticmethod
+    def make_series(source_data: TrainingSourceDataV2) -> tuple[np.ndarray, int]:
+        """
+        Creates a series of images with random objects for training purposes.
+
+        Args:
+            source_data (TrainingSourceDataV2): The data source for generating random objects.
+
+        Returns:
+            Tuple containing the generated image series and a result value.
+        """
         rand_obg = source_data.generate_random_objects(obj_type=source_data.OBJ_TYPE_ALL)
         if random.randint(1, 101) > 50:
             what_to_draw = random.randrange(0, 100)
@@ -382,28 +544,27 @@ class TrainingDatasetV2:
                 imgs = source_data.draw_hot_pixels(imgs, bool(random.randrange(0, 2)))
         imgs = source_data.prepare_images(imgs)
         imgs, timestamps = source_data.adjust_chunks_to_min_len(imgs, rand_obg.timestamps, min_len=5)
+        return imgs, res
 
-        # TODO: Timestamp normalization if required
-        # slow input
-        # average frame of each 4 frames
-        slow_images = []
-        # for i in range(len(imgs)):
-        #     if i % 4 == 0:
-        #         slow_images.append(np.average(imgs[i:i + 4], axis=0))
-        # slow_images = np.array(slow_images)
-        # return imgs, slow_images, np.array([res])
-        return imgs, None, np.array([res])
+    def make_batch(self, batch_size: int, save: bool = False) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Creates a batch of images with random objects for training purposes.
 
-    # @measure_execution_time
-    def make_batch(self, batch_size, save=False):
+        Args:
+            batch_size (int): The size of the batch.
+            save (bool): If True, saves the generated images as GIFs.
+
+        Returns:
+            Tuple containing the generated image series and a result value.
+        """
         source_data = random.choice(self.source_datas)
         batch = [self.make_series(source_data) for _ in range(batch_size)]
-        X_fast_batch = np.array([item[0] for item in batch])
-        # X_slow_batch = np.array([item[1] for item in batch])
-        y_batch = np.array([item[2] for item in batch])
+        x_fast_batch = np.array([item[0] for item in batch])
+        y_batch = np.array([item[1] for item in batch])
 
+        # for debug purposes - it's possible to review some samples of synthetic data used for training
         if save:
-            for num, (bla_imgs, res) in enumerate(zip(X_fast_batch, y_batch)):
+            for num, (bla_imgs, res) in enumerate(zip(x_fast_batch, y_batch)):
                 bla_imgs.shape = bla_imgs.shape[:3]
                 bla_imgs = bla_imgs * 256
                 new_frames = [Image.fromarray(frame).convert('L').convert('P') for frame in bla_imgs]
@@ -413,13 +574,22 @@ class TrainingDatasetV2:
                     append_images=new_frames[1:],
                     duration=200,
                     loop=0)
-        # return [X_fast_batch, X_slow_batch], y_batch
-        return X_fast_batch, y_batch
+        return x_fast_batch, y_batch
 
-    def batch_generator(self, batch_size):
+    def batch_generator(self, batch_size: int) -> Generator[tuple[np.ndarray, np.ndarray]]:
+        """
+        Generator function that yields batches of image data and corresponding labels.
+
+        Args:
+            batch_size (int): The size of each batch.
+
+        Yields:
+            tuple[np.ndarray, np.ndarray]: A tuple containing the batch of images and their corresponding labels.
+        """
         bla = False
         i = 0
         while True:
+            # for debug purposes - it's possible to review some samples of synthetic data used for training
             if i == 450:
                 bla = True
             yield self.make_batch(batch_size, bla)
@@ -429,10 +599,21 @@ class TrainingDatasetV2:
 
 @numba.jit(nopython=True, fastmath=True)
 def insert_star_by_coords(image, star, coords):
+    """
+    Inserts a sample of the star onto another image at specified coordinates.
+
+    Note: speed up with Numba
+
+    Args:
+    image (np.ndarray): The image to insert the star image into.
+    star (np.ndarray): The star image to be inserted.
+    coords (Tuple[int, int]): The coordinates to place the star image.
+
+    Returns:
+    np.ndarray: The image with the star image inserted.
+    """
     star_y_size, star_x_size = star.shape[:2]
     image_y_size, image_x_size = image.shape[:2]
-    # star = np.reshape(star, (star.shape[:2]))
-    # image = np.reshape(image, (image.shape[:2]))
     x, y = coords
     x = round(x)
     y = round(y)
@@ -460,7 +641,25 @@ def insert_star_by_coords(image, star, coords):
 
 
 @numba.jit(nopython=True, fastmath=True)
-def calculate_star_form_on_single_image(image, star, start_coords, movement_vector, exposure_time=None):
+def calculate_star_form_on_single_image(image: np.ndarray, star: np.ndarray, start_coords: tuple[int, int],
+                                        movement_vector: np.ndarray, exposure_time: Optional[Decimal] = None
+                                        ) -> np.ndarray:
+    """
+    Calculate the form of a star sample on a single image based on the star sample, coordinates, movement vector,
+    and exposure time. The idea is to emulate object sample movement during the single exposure.
+
+    Note: speed up with Numba
+
+    Args:
+        image (np.ndarray): The image to insert the star form into.
+        star (np.ndarray): The star sample image to be inserted.
+        start_coords (Tuple[int, int]): The starting coordinates to place the star image.
+        movement_vector (np.ndarray): The movement vector of the star image.
+        exposure_time (Optional[Decimal], optional): The exposure time of the image. Defaults to None.
+
+    Returns:
+        np.ndarray: The image with the star form inserted.
+    """
     per_image_movement_vector = movement_vector * exposure_time / 3600
     y_move, x_move = per_image_movement_vector
     start_y, start_x = start_coords
@@ -469,20 +668,30 @@ def calculate_star_form_on_single_image(image, star, start_coords, movement_vect
         image = insert_star_by_coords(image, star, (start_y, start_x))
         return image
     x_moves_per_y_moves = x_move / y_move
-
     for dy in range(round(y_move + 1)):
         if dy * x_moves_per_y_moves // 1 > dx:
             dx += 1
         elif dy * x_moves_per_y_moves // 1 < -dx:
             dx -= 1
         image = insert_star_by_coords(image, star, (start_y + dy, start_x + dx))
-        if start_y + dy + star.shape[0] < 0 or start_y + dy - star.shape[0] > image.shape[0] or start_x + dx + star.shape[1] < 0 or start_x + dx - star.shape[1] > image.shape[1]:
+        if (start_y + dy + star.shape[0] < 0 or start_y + dy - star.shape[0] > image.shape[0]
+                or start_x + dx + star.shape[1] < 0 or start_x + dx - star.shape[1] > image.shape[1]):
             break
     return image
 
 
 @numba.jit(nopython=True, fastmath=True)
-def generate_timestamps(ts_num):
+def generate_timestamps(ts_num: int) -> tuple[list[int], float]:
+    """
+    Generate random timestamps emulating timestamps of images. It's needed to emulate different number of sessions and
+    different exposure times within each session.
+
+    Args:
+        ts_num (int): The number of timestamps to generate.
+
+    Returns:
+        Tuple: A tuple containing a list of generated timestamps and a numpy array of random exposure times.
+    """
     # generate random timestamps emulating timestamps of observations sessions staring from now
     # each session should have at least 5 timestamps. If there are less than 5 timestamps - only one session will be
     # generated. number of sessions is random. Interval between timestamps is equal to the same random exposure time
@@ -492,7 +701,7 @@ def generate_timestamps(ts_num):
     max_sessions_num = min((ts_num - 1) // 8, 4)
     sessions_num = 0 if max_sessions_num == 0 else random.randrange(0, max_sessions_num)
     exposures = np.array([0.25, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    exposure = exposures[random.randrange(len(exposures))]
+    exposure = float(exposures[random.randrange(len(exposures))])
 
     if sessions_num == 0:
         frames_per_session = [ts_num]
@@ -508,17 +717,6 @@ def generate_timestamps(ts_num):
     new_session_starts = []
     for i in range(len(frames_per_session) - 1):
         new_session_starts.append(sum(frames_per_session[:i + 1]))
-    # new_session_starts = []
-    # free_frames_num = ts_num - sessions_num * min_frames_per_session
-    # bla_timestamps = np.array(list(range(ts_num)))
-    # for _ in range(sessions_num ):
-    #     idx = random.randrange(len(bla_timestamps))
-    #     temp_session_start = bla_timestamps[idx]
-    #     bla_timestamps = np.delete(bla_timestamps, idx)
-    #     # bla_timestamps.pop(bla_timestamps.index(temp_session_start))
-    #     new_session_starts.append(temp_session_start)
-    # new_session_starts.sort()
-    # with numba.objmode:
     start_ts = 0
     timestamps = []
     max_inter_exposure = 20 * 60  # 20 minutes
@@ -528,19 +726,27 @@ def generate_timestamps(ts_num):
             next_timestamp = 0
         elif num in new_session_starts:
             added_days += 1
-            next_timestamp = start_ts + added_days * 24 * 3600 + random.randrange(0, 3) * 60 + random.randrange(0, 3600)
-            # next_timestamp = start_ts + datetime.timedelta(
-            #     days=added_days, hours=random.randrange(0, 3), seconds=random.randrange(0, 3600))
+            next_timestamp = start_ts + added_days * 24 * 3600 + random.randrange(
+                0, 3) * 60 + random.randrange(0, 3600)
         else:
             next_timestamp = timestamps[-1] + exposure + random.randrange(1, max_inter_exposure + 1)
-            # next_timestamp = timestamps[-1] + datetime.timedelta(
-            #     seconds=exposure + random.randrange(1, max_inter_exposure + 1))
         timestamps.append(next_timestamp)
     return timestamps, exposure
 
 
 @numba.jit(nopython=True, fastmath=True)
-def generate_random_objects(imgs_num, star_samples):
+def generate_random_objects(imgs_num: int, star_samples: list[np.ndarray]
+                            ) -> tuple[int, int, int, np.ndarray, float, np.ndarray, float, list[int]]:
+    """
+    Generates random objects based on the provided image number and star samples.
+
+    Args:
+        imgs_num (int): The number of images.
+        star_samples: The samples of stars for object generation.
+
+    Returns:
+        Tuple: A tuple containing random object properties.
+    """
     start_y = random.randrange(0, CHUNK_SIZE)
     start_x = random.randrange(0, CHUNK_SIZE)
     start_frame_idx = random.randrange(0, imgs_num)

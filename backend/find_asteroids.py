@@ -1,16 +1,18 @@
-from cryptography.fernet import Fernet
 import cv2
 import datetime
 import h5py
-from io import BytesIO
 import numpy as np
 import os
-from PIL import Image
 import tensorflow as tf
+
+from cryptography.fernet import Fernet
+from io import BytesIO
+from PIL import Image
 from typing import Optional
 
+from backend.consuming_functions.measure_execution_time import measure_execution_time
+from backend.progress_bar import AbstractProgressBar
 from backend.source_data_v2 import SourceDataV2, CHUNK_SIZE
-from .progress_bar import AbstractProgressBar
 from logger.logger import get_logger
 
 
@@ -21,19 +23,34 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 logger = get_logger()
 
 
+@measure_execution_time
 def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[AbstractProgressBar] = None,
-                      model_path: Optional[str] = None):
+                      model_path: Optional[str] = None) -> list[tuple[int, int, float]]:
+    """
+    Predict asteroids in the given source data using AI model.
+
+    Args:
+        source_data (SourceDataV2): The source data containing calibrated and aligned monochromatic images.
+        progress_bar (Optional[AbstractProgressBar], optional): Progress bar for tracking prediction progress.
+            Defaults to None.
+        model_path (Optional[str], optional): Path to the AI model for prediction. If the path is not provided, the
+            model with the highest version will be used. Defaults to None.
+
+    Returns:
+        List[Tuple[int, int, float]]: A list of tuples containing the coordinates and confidence level of predicted
+            asteroids.
+    """
     logger.log.info("Finding moving objects...")
     model_path = get_model_path() if model_path is None else model_path
     logger.log.info(f"Loading model: {model_path}")
     model = decrypt_model(model_path)
     batch_size = 10
+    logger.log.debug(f"Batch size: {batch_size}")
     chunk_generator = source_data.generate_image_chunks()
     batch_generator = source_data.generate_batch(chunk_generator, batch_size=batch_size)
     ys, xs = source_data.get_number_of_chunks()
     progress_bar_len = len(ys) * len(xs)
     progress_bar_len = progress_bar_len // batch_size + 1 if progress_bar_len % batch_size != 0 else 0
-
     if progress_bar:
         progress_bar.set_total(progress_bar_len)
     objects_coords = []
@@ -45,12 +62,21 @@ def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[Abstract
             if res > 0.8:
                 objects_coords.append((y, x, res))
         if progress_bar:
-            progress_bar.update(batch_size)
+            progress_bar.update()
     progress_bar.complete()
     return objects_coords
 
 
-def save_results(source_data: SourceDataV2, results, output_folder):
+def save_results(source_data: SourceDataV2, results, output_folder) -> np.ndarray:
+    """
+    This function saves the results of the object recognition process. It marks the areas where the model located
+    probable asteroids and creates the GIFs of these areas.
+
+    Args:
+        source_data (SourceDataV2): The source data object containing image data.
+        results: The results of the object recognition process.
+        output_folder (str): The folder where the results will be saved.
+    """
     logger.log.info("Saving results...")
     max_image = np.copy(source_data.max_image) * 255.
     max_image = cv2.cvtColor(max_image, cv2.COLOR_GRAY2BGR)
@@ -96,7 +122,18 @@ def save_results(source_data: SourceDataV2, results, output_folder):
     return max_image
 
 
-def annotate_results(source_data: SourceDataV2, img_to_be_annotated: np.ndarray, output_folder: str, magnitude_limit: float):
+def annotate_results(source_data: SourceDataV2, img_to_be_annotated: np.ndarray, output_folder: str,
+                     magnitude_limit: float) -> None:
+    """
+    Annotates the results on the input image. If there are known asteroids or comets within Field of View - they will
+    be marked. Annotation will be done for the first timestamp of each imaging session.
+
+    Args:
+        source_data (SourceDataV2): The source data object containing image data.
+        img_to_be_annotated (np.ndarray): The image to be annotated.
+        output_folder (str): The folder where the annotated results will be saved.
+        magnitude_limit (float): The magnitude limit for known asteroids.
+    """
     logger.log.info("Annotating results...")
     start_session_frame_nums = [0]
 
@@ -105,10 +142,10 @@ def annotate_results(source_data: SourceDataV2, img_to_be_annotated: np.ndarray,
         if header.timestamp - start_ts > datetime.timedelta(hours=12):
             start_session_frame_nums.append(num)
             start_ts = header.timestamp
-    for start_frame_num in start_session_frame_nums:
+    for num, start_frame_num in enumerate(start_session_frame_nums, start=1):
+        logger.log.info(f"Fetching known objects for session number {num}")
         for obj_type in source_data.fetch_known_asteroids_for_image(start_frame_num, magnitude_limit=magnitude_limit):
             for item in obj_type:
-                print(f"Known object: {item.name}")
                 target_x, target_y = item.pixel_coordinates
                 target_x = round(float(target_x))
                 target_y = round(float(target_y))
@@ -119,7 +156,6 @@ def annotate_results(source_data: SourceDataV2, img_to_be_annotated: np.ndarray,
                     y = (target_y - 4, target_y - 14)
                 img_to_be_annotated =cv2.line(
                     img_to_be_annotated, (x[0], y[0]), (x[1], y[1]), (0, 165, 255), 2)
-                # plot.plot(x, y, color="orange", linewidth=2)
 
                 if target_y < 50:
                     text_y = target_y + 20 + 20
@@ -137,7 +173,19 @@ def annotate_results(source_data: SourceDataV2, img_to_be_annotated: np.ndarray,
 
 
 # Decrypt the model weights
-def decrypt_model(encrypted_model_path, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw='):
+def decrypt_model(encrypted_model_path: str,
+                  key: Optional[bytes] = b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl2EOYgtScw=') -> tf.keras.Model:
+    """
+    Decrypts the model weights using the provided key.
+    Preliminary version of model encryption. It was done when I was thinking to make this project open source or not.
+
+    Args:
+        encrypted_model_path (str): The path to the encrypted model file.
+        key (bytes): The key used for decryption. Defaults to a preset key.
+
+    Returns:
+        tf.keras.Model: The decrypted model.
+    """
     # Read the encrypted weights from the file
     with open(encrypted_model_path, "rb") as file:
         encrypted_model_data = file.read()
@@ -156,7 +204,13 @@ def decrypt_model(encrypted_model_path, key=b'J17tdv3zz2nemLNwd17DV33-sQbo52vFzl
     return loaded_model
 
 
-def get_model_path():
+def get_model_path() -> str:
+    """
+    Get the path to the latest model file.
+
+    Returns:
+        str: The path to the latest model file.
+    """
     root_dir = os.path.dirname(os.path.realpath(__file__))
     file_list = []
     if os.path.exists(root_dir):
@@ -188,7 +242,21 @@ def get_model_path():
     return model_path
 
 
-def get_big_rectangle_coords(y, x, image_shape, gif_size):
+def get_big_rectangle_coords(y: int, x: int, image_shape: tuple, gif_size: int) -> tuple[int, int, int]:
+    """
+    Calculate the coordinates of a large rectangle based on the center coordinates and image properties.
+    Large rectangle is used for the GIF animation.
+
+    Args:
+        y (int): The y-coordinate of the center point.
+        x (int): The x-coordinate of the center point.
+        image_shape (Tuple[int, int, int]): The shape of the image (height, width, channels).
+        gif_size (int): The size of the GIF.
+
+    Returns:
+        Tuple[int, int, int]: The coordinates of the top-left corner of the rectangle (box_y, box_x)
+        and the size of the rectangle.
+    """
     size = CHUNK_SIZE
     box_x = 0 if x - size * (gif_size // 2) < 0 else x - size * (gif_size // 2)
     box_y = 0 if y - size * (gif_size // 2) < 0 else y - size * (gif_size // 2)

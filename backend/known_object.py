@@ -1,10 +1,19 @@
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
-import re
 
 
 class KnownObject:
+    """
+    Represents a known astronomical object.
+
+    Attributes:
+        name (str): The name of the object.
+        coordinates (SkyCoord): The celestial coordinates of the object.
+        magnitude (str): The visual magnitude of the object.
+        _wcs (WCS): The World Coordinate System information of the object.
+        __pixel_coordinates (None or array-like): The pixel coordinates of the object.
+    """
     def __init__(self, properties: dict, wcs: WCS=None):
         self.name = properties["Object name"]
         self.coordinates = SkyCoord(
@@ -17,10 +26,11 @@ class KnownObject:
         self.__pixel_coordinates = None
 
     def __str__(self):
-        return f"{self.name} {self.magnitude}\n{self.coordinates}"
+        return f"{self.name}:{self.magnitude}"
 
     @property
-    def wcs(self):
+    def wcs(self) -> WCS:
+        """World Coordinate System information of the object"""
         return self._wcs
 
     @wcs.setter
@@ -28,10 +38,12 @@ class KnownObject:
         self._wcs = value
 
     @property
-    def pixel_coordinates(self):
+    def pixel_coordinates(self) -> tuple:
+        """Pixel coordinates of the object on the image calculated from the World Coordinate System information"""
         if not isinstance(self._wcs, WCS):
             raise ValueError("WCS is not specified or is not an instance of class WCS")
-        return self.wcs.world_to_pixel(self.coordinates) if self.__pixel_coordinates is None else self.__pixel_coordinates
+        return self.wcs.world_to_pixel(self.coordinates) if self.__pixel_coordinates is None \
+            else self.__pixel_coordinates
 
 
 if __name__ == '__main__':

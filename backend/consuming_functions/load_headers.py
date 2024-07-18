@@ -5,16 +5,16 @@ import traceback
 from astropy.coordinates import SkyCoord
 from datetime import datetime
 from decimal import Decimal
+from functools import partial
 from logging.handlers import QueueHandler
 from multiprocessing import Queue, cpu_count, Pool, Manager
+from threading import Event
 from typing import Optional
-from functools import partial
 from xisf import XISF
 
 from backend.progress_bar import AbstractProgressBar
 from backend.data_classes import SolveData, SiteLocation, Header
 from logger.logger import get_logger
-from threading import Event
 from backend.consuming_functions.measure_execution_time import measure_execution_time
 
 
@@ -40,7 +40,18 @@ def __get_datetime_from_str(date_str: str) -> datetime:
 
 def load_headers_worker(filenames: list[str], progress_queue: Optional[Queue] = None,
                         stop_queue: Optional[Queue] = None, log_queue: Optional[Queue] = None) -> list[Header]:
+    """
+    Worker function to load header information from XISF and FIT(S) files.
 
+    Args:
+        filenames (List[str]): List of filenames to load headers from within this worker.
+        progress_queue (Optional[Queue], optional): Queue for reporting progress. Defaults to None.
+        stop_queue (Optional[Queue], optional): Queue to stop the loading process. Defaults to None.
+        log_queue (Optional[Queue], optional): Queue for logging. Defaults to None.
+
+    Returns:
+        List[Header]: A list of Header objects containing the loaded header information from the files.
+    """
     handler = QueueHandler(log_queue)
     logger.log.addHandler(handler)
     logger.log.debug(f"Load worker started with {len(filenames)} filenames")
@@ -49,6 +60,7 @@ def load_headers_worker(filenames: list[str], progress_queue: Optional[Queue] = 
         headers = []
         for filename in filenames:
             if stop_queue is not None and not stop_queue.empty():
+                logger.log.debug("Load headers worker detected stop event. Stopping.")
                 break
             if filename.lower().endswith(".xisf"):
                 headers.append(load_header_xisf(filename))
@@ -68,13 +80,27 @@ def load_headers_worker(filenames: list[str], progress_queue: Optional[Queue] = 
 @measure_execution_time
 def load_headers(filenames: list[str], progress_bar: Optional[AbstractProgressBar] = None,
                  stop_event: Optional[Event] = None) -> list[Header]:
+    """
+    Load header information from XISF and FIT(S) files using multiple workers.
+
+    Args:
+        filenames (List[str]): List of filenames to load headers from.
+        progress_bar (Optional[AbstractProgressBar], optional): Progress bar for tracking loading progress.
+            Defaults to None.
+        stop_event (Optional[Event], optional): Event to stop the loading process. Defaults to None.
+
+    Returns:
+        List[Header]: A list of Header objects containing the loaded header information from the files.
+    """
     available_cpu = min(4, cpu_count(), len(filenames))
+    logger.log.debug(f"Number of CPUs to be used for alignment: {available_cpu}")
     with Pool(available_cpu) as pool:
         m = Manager()
         progress_queue = m.Queue()
         log_queue = m.Queue()
         logger.start_process_listener(log_queue)
         stop_queue = m.Queue(maxsize=1)
+        logger.log.debug(f"Starting alignment with {available_cpu} workers")
         results = pool.map_async(
             partial(load_headers_worker, progress_queue=progress_queue, stop_queue=stop_queue, log_queue=log_queue),
             np.array_split(filenames, available_cpu))
@@ -84,13 +110,16 @@ def load_headers(filenames: list[str], progress_bar: Optional[AbstractProgressBa
             for _ in range(len(filenames)):
                 if stop_event is not None and stop_event.is_set():
                     stop_queue.put(True)
+                    logger.log.debug("Stop event triggered")
                     break
                 got_result = False
                 while not got_result:
                     if not progress_queue.empty():
                         progress_queue.get()
+                        logger.log.debug("Got a result from the progress queue")
                         got_result = True
                     if not stop_queue.empty():
+                        logger.log.debug("Detected error from workers. Stopping.")
                         break
                 if not stop_queue.empty():
                     break
@@ -102,11 +131,21 @@ def load_headers(filenames: list[str], progress_bar: Optional[AbstractProgressBa
             headers.extend(item)
         pool.close()
         pool.join()
+        logger.log.debug(f"Load headers pool stopped.")
         logger.stop_process_listener()
     return headers
 
 
 def load_header_xisf(filename: str) -> Header:
+    """
+    Load header information from an XISF file.
+
+    Args:
+        filename (str): The path to the XISF file.
+
+    Returns:
+        Header: A Header object containing the extracted information from the XISF file.
+    """
     # Initialize XISF object
     xisf = XISF(filename)
     # Get the metadata of the first image in the XISF file
@@ -153,6 +192,15 @@ def load_header_xisf(filename: str) -> Header:
 
 
 def load_header_fits(filename: str) -> Header:
+    """
+    Load header information from a FITS file.
+
+    Args:
+        filename (str): The path to the FITS file.
+
+    Returns:
+        Header: A Header object containing the extracted information from the FITS file.
+    """
     # Open the FITS file
     with astropy.io.fits.open(filename) as hdul:
         # Get the header of the first HDU

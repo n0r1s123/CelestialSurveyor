@@ -1,9 +1,7 @@
-import tensorflow as tf
-from keras import backend as K
+# Slow Fast Model implementation taken from https://github.com/xuzheyuan624/slowfast-keras with some modifications
 from keras.layers import Conv3D, BatchNormalization, ReLU, Add, MaxPool3D, GlobalAveragePooling3D, Concatenate, Dropout, Dense, Lambda, Input
 from keras.models import Model
 from keras import Sequential
-
 
 
 def Conv_BN_ReLU(planes, kernel_size, strides=(1, 1, 1), padding='same', use_bias=False):
@@ -31,8 +29,10 @@ def bottleneck(x, planes, stride=1, downsample=None, head_conv=1, use_bias=False
     x = ReLU()(x)
     return x
 
+
 def datalayer(x, stride):
     return x[:, ::stride, :, :, :]
+
 
 def SlowFast_body(layers, block, dropout=0.5):
     inputs = Input(shape=(None, 64, 64, 1))
@@ -46,7 +46,6 @@ def SlowFast_body(layers, block, dropout=0.5):
     x = Dense(32, activation='relu')(x)
     out = Dense(1, activation='sigmoid')(x)
     return Model(inputs, out)
-
 
 
 def Fast_body(x, layers, block):
@@ -68,6 +67,7 @@ def Fast_body(x, layers, block):
     x, fast_inplanes = make_layer_fast(x, block, 64, layers[3], stride=2, head_conv=3, fast_inplanes=fast_inplanes)
     x = GlobalAveragePooling3D()(x)
     return x, lateral
+
 
 def Slow_body(x, lateral, layers, block):
     slow_inplanes = 64 + 64//8*2
@@ -98,6 +98,7 @@ def make_layer_fast(x, block, planes, blocks, stride=1, head_conv=1, fast_inplan
         x = block(x, planes, head_conv=head_conv)
     return x, fast_inplanes
 
+
 def make_layer_slow(x, block, planes, blocks, stride=1, head_conv=1, slow_inplanes=80, block_expansion=4):
     downsample = None
     if stride != 1 or slow_inplanes != planes * block_expansion:
@@ -110,8 +111,3 @@ def make_layer_slow(x, block, planes, blocks, stride=1, head_conv=1, slow_inplan
         x = block(x, planes, head_conv=head_conv)
     slow_inplanes = planes * block_expansion + planes * block_expansion//8*2
     return x, slow_inplanes
-
-
-if __name__ == "__main__":
-    model = SlowFast_body([3, 4, 6, 3], bottleneck)
-    model.summary()

@@ -2,15 +2,14 @@ import tqdm
 
 from abc import ABC, abstractmethod
 from wx import Gauge
-from typing import Optional
 
 
 class AbstractProgressBar(ABC):
     @abstractmethod
     def update(self, num: int = 1):
         """
-        Update the progress bar with a given progress value.
-        :param progress: A float value between 0 and 1 indicating the progress.
+        Update the progress bar by the given number of units.
+        :param num: An integer representing the number of units to update.
         """
         pass
 
@@ -46,6 +45,9 @@ class AbstractProgressBar(ABC):
 
 
 class ProgressBarCli(AbstractProgressBar):
+    """
+    This class represents a command-line progress bar.
+    """
     def __init__(self):
 
         self.progress_bar = None
@@ -55,7 +57,6 @@ class ProgressBarCli(AbstractProgressBar):
         self.progress_bar.update()
 
     def complete(self):
-        # self.progress_bar.refresh()
         self.progress_bar.close()
         self.progress_bar.clear()
         self.progress_bar = None
@@ -64,12 +65,10 @@ class ProgressBarCli(AbstractProgressBar):
         self.progress_bar.clear()
 
     def set_description(self, description: str):
-        # Implement description setting logic specific to ProgressBar1
         self.progress_bar.set_description(description)
 
     def set_total(self, total: int):
         self.progress_bar = tqdm.tqdm(total=total)
-        # self.progress_bar.total = total
         self.progress_bar.display()
 
     def _draw(self):
@@ -77,6 +76,9 @@ class ProgressBarCli(AbstractProgressBar):
 
 
 class ProgressBarGui(AbstractProgressBar):
+    """
+    This class represents a WxPython progress bar used in UI.
+    """
     def __init__(self, progress_bar: Gauge):
         self.progress_bar = progress_bar
         self.progress_bar.SetValue(0)
@@ -101,10 +103,22 @@ class ProgressBarGui(AbstractProgressBar):
 
 
 class ProgressBarFactory:
+    """
+    A factory class for creating different types of progress bars.
+    """
     @staticmethod
     def create_progress_bar(progress_bar_instance) -> AbstractProgressBar:
+        """
+        Create and return a specific type of progress bar based on the given instance.
+
+        Args:
+            progress_bar_instance (SharedMemoryParams): An instance of a progress bar.
+
+        Returns:
+            tAbstractProgressBar: An AbstractProgressBar instance representing a specific type of progress bar.
+        """
         if isinstance(progress_bar_instance, tqdm.tqdm):
-            return ProgressBarCli(progress_bar_instance)
+            return ProgressBarCli()
         elif isinstance(progress_bar_instance, Gauge):
             return ProgressBarGui(progress_bar_instance)
         else:
