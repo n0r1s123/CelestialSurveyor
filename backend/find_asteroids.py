@@ -3,6 +3,7 @@ import datetime
 import h5py
 import numpy as np
 import os
+import sys
 import tensorflow as tf
 
 from cryptography.fernet import Fernet
@@ -212,10 +213,10 @@ def get_model_path() -> str:
     Returns:
         str: The path to the latest model file.
     """
-    root_dir = os.path.dirname(os.path.realpath(__file__))
+    model_dir = os.path.join(sys.path[1], "model")
     file_list = []
-    if os.path.exists(root_dir):
-        file_list = os.listdir(root_dir)
+    if os.path.exists(model_dir):
+        file_list = os.listdir(model_dir)
     models = [item for item in file_list if item.startswith('model') and item.endswith('bin')]
     model_nums = []
     for model in models:
@@ -224,9 +225,9 @@ def get_model_path() -> str:
         model_nums.append(int(num))
     if model_nums:
         model_num = max(model_nums)
-        model_path = root_dir
+        model_path = model_dir
     else:
-        secondary_dir = os.path.split(root_dir)[0]
+        secondary_dir = os.path.split(model_dir)[0]
         file_list = os.listdir(secondary_dir)
         models = [item for item in file_list if item.startswith('model') and item.endswith('bin')]
         model_nums = []
