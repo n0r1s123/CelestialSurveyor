@@ -1,5 +1,6 @@
 # Slow Fast Model implementation taken from https://github.com/xuzheyuan624/slowfast-keras with some modifications
-from keras.layers import Conv3D, BatchNormalization, ReLU, Add, MaxPool3D, GlobalAveragePooling3D, Concatenate, Dropout, Dense, Lambda, Input
+from keras.layers import (Conv3D, BatchNormalization, ReLU, Add, MaxPool3D, GlobalAveragePooling3D,
+                          Concatenate, Dropout, Dense, Lambda, Input)
 from keras.models import Model
 from keras import Sequential
 

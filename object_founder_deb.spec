@@ -5,7 +5,7 @@ block_cipher = None
 a = Analysis(
     ['main.py'],
     pathex=['/mnt/object_recognition'],
-    binaries=[('./model/model113.bin', './')],
+    binaries=[('./model/model161.bin', './')],
     datas=[],
     hiddenimports=[],
     hookspath=[],
