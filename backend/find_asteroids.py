@@ -8,6 +8,7 @@ import tensorflow as tf
 
 from cryptography.fernet import Fernet
 from io import BytesIO
+from multiprocessing import cpu_count
 from PIL import Image
 from typing import Optional
 
@@ -19,6 +20,8 @@ from logger.logger import get_logger
 
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+tf.config.threading.set_inter_op_parallelism_threads(cpu_count() - 1)
 
 
 logger = get_logger()

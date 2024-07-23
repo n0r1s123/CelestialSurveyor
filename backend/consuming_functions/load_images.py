@@ -180,7 +180,7 @@ def load_images(file_list: list[str], shm_params: SharedMemoryParams, to_debayer
     Returns:
         None
     """
-    available_cpus = cpu_count()
+    available_cpus = cpu_count() - 1
     used_cpus = min(available_cpus, len(file_list))
     logger.log.debug(f"Number of CPUs to be used for loading images: {used_cpus}")
     with (Pool(processes=used_cpus) as pool):

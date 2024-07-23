@@ -43,7 +43,7 @@ def plate_solve_image(image: np.ndarray, header: Header,
     fov = np.min(shape[:2]) * pixel.to(u.deg)
     if sky_coord is None:
         # sky_coord = twirl.gaia_radecs(header_data.sky_coord, fov)[0:200]
-        sky_coord = get_sources_gaia(header_data.sky_coord, fov)[0:200]
+        sky_coord = get_sources_from_gaia(header_data.sky_coord, fov)[0:200]
         sky_coord = twirl.geometry.sparsify(sky_coord, 0.1)
         sky_coord = sky_coord[:25]
     top_left_corner = (slice(None, img.shape[0] // 2), slice(None, img.shape[1] // 2), (0, 0))
@@ -89,7 +89,7 @@ def plate_solve(shm_params: SharedMemoryParams, headers: list[Header],
     imgs = np.memmap(shm_params.shm_name, dtype=shm_params.shm_dtype, mode='r+', shape=shm_params.shm_shape)
     # get reference stars from GAIA for the first image's FOV
     _, reference_stars = plate_solve_image(imgs[0], headers[0])
-    available_cpus = cpu_count()
+    available_cpus = cpu_count() - 1
     frames_num = shm_params.shm_shape[0]
     used_cpus = min(available_cpus, frames_num)
     logger.log.debug(f"Number of CPUs to be used for loading images: {used_cpus}")
@@ -161,7 +161,8 @@ def plate_solve_worker(img_indexes: list[int], header: Header, shm_params: Share
     return res
 
 
-def get_sources_gaia(center: SkyCoord, fov, limit: int = 10000, mag_limit: float = 10) -> np.ndarray:
+@measure_execution_time
+def get_sources_from_gaia(center: SkyCoord, fov, limit: int = 10000, mag_limit: float = 10) -> np.ndarray:
     ra = center.ra.deg
     dec = center.dec.deg
     if fov.ndim == 1:

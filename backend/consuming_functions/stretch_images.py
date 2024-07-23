@@ -31,7 +31,7 @@ def stretch_images(shm_params: SharedMemoryParams, progress_bar: Optional[Abstra
     Returns:
         None
     """
-    available_cpus = cpu_count()
+    available_cpus = cpu_count() - 1
     frames_num = shm_params.shm_shape[0]
     used_cpus = min(available_cpus, frames_num)
     logger.log.debug(f"Number of CPUs to be used for loading images: {used_cpus}")
