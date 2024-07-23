@@ -108,20 +108,26 @@ def align_wcs_worker(img_indexes: list[int], shm_params: SharedMemoryParams, pro
     logger.log.debug(f"Align worker started with {len(img_indexes)} images")
     logger.log.debug(f"Shared memory parameters: {shm_params}")
     for img_idx in img_indexes:
+        too_far = False
         if stop_queue is not None and not stop_queue.empty():
             logger.log.debug("Align worker detected stop event. Stopping.")
             break
 
         try:
-            _, footprint = reproject_interp(
-                (np.reshape(np.copy(imgs[img_idx]), shm_params.shm_shape[1:3]),
-                 all_wcses[img_idx]),
-                ref_wcs,
-                shape_out=shm_params.shm_shape[1:3],
-                output_array=imgs[img_idx],
-            )
-            imgs.flush()
-
+            distance = get_centre_distance(imgs[0].shape, ref_wcs, all_wcses[img_idx])
+            if distance > 0.1 * min(imgs[0].shape[:2]):
+                too_far = True
+                logger.log.warning(f"Align worker detected that image at index '{img_idx}' is too far "
+                                   f"from the reference solution.  Pixel distance: {distance}. Excluding this image")
+            else:
+                _, footprint = reproject_interp(
+                    (np.reshape(np.copy(imgs[img_idx]), shm_params.shm_shape[1:3]),
+                     all_wcses[img_idx]),
+                    ref_wcs,
+                    shape_out=shm_params.shm_shape[1:3],
+                    output_array=imgs[img_idx],
+                )
+                imgs.flush()
         except Exception:
             # if an error occurs, assume that the image is not aligned, and mark it as such. In this case alignment
             # process is not considered to be failed, failed image will not be used in the next steps
@@ -130,13 +136,41 @@ def align_wcs_worker(img_indexes: list[int], shm_params: SharedMemoryParams, pro
             logger.log.error(f"Align worker failed to process image at index "
                              f"'{img_idx}' due to the following error:\n{traceback.format_exc()}")
         else:
-            success = True
-            # this line is needed to be consistent with the legacy code which does image cropping
-            footprint = 1 - footprint
-            footprint = np.array(footprint, dtype=bool)
+            if too_far:
+                footprint = np.ones(shm_params.shm_shape[1:], dtype=bool)
+                success = False
+            else:
+                success = True
+                # this line is needed to be consistent with the legacy code which does image cropping
+                footprint = 1 - footprint
+                footprint = np.array(footprint, dtype=bool)
         footprints.append(footprint)
         successes.append(success)
 
         progress_queue.put(img_idx)
     logger.log.removeHandler(handler)
     return img_indexes, successes, footprints
+
+
+def get_centre_distance(img_shape: tuple, wcs1: WCS, wcs2: WCS):
+    """
+    Calculate the distance between the centers of two images.
+
+    Args:
+        img_shape (tuple[int, int]): Shape of the image.
+        wcs1 (WCS): WCS information of the first image.
+        wcs2 (WCS): WCS information of the second image.
+
+    Returns:
+        float: The distance between the centers of the two images.
+    """
+    ref_center_x, ref_center_y = img_shape[1] / 2, img_shape[0] / 2
+    center_coordinates = wcs2.pixel_to_world(ref_center_x, ref_center_y)
+    second_centre_on_ref_image = wcs1.world_to_pixel(center_coordinates)
+    logger.log.debug(f"Second centre: {second_centre_on_ref_image}")
+    second_center_x, second_center_y = second_centre_on_ref_image
+    second_center_x = int(second_center_x)
+    second_center_y = int(second_center_y)
+    distance = np.sqrt((ref_center_x - second_center_x) ** 2 + (ref_center_y - second_center_y) ** 2)
+    logger.log.debug(f"Distance: {distance}")
+    return distance
