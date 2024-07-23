@@ -25,7 +25,6 @@ logger = get_logger()
 
 
 @measure_execution_time
-@tf.autograph.experimental.do_not_convert
 def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[AbstractProgressBar] = None,
                       model_path: Optional[str] = None) -> list[tuple[int, int, float]]:
     """
