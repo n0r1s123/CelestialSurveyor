@@ -4,6 +4,8 @@ import twirl
 
 from astropy import units as u
 from astropy.wcs import WCS
+from astropy.coordinates import SkyCoord
+from astroquery.gaia import Gaia
 from functools import partial
 from logging.handlers import QueueHandler
 from multiprocessing import Queue, cpu_count, Pool, Manager
@@ -40,7 +42,8 @@ def plate_solve_image(image: np.ndarray, header: Header,
     shape = img.shape
     fov = np.min(shape[:2]) * pixel.to(u.deg)
     if sky_coord is None:
-        sky_coord = twirl.gaia_radecs(header_data.sky_coord, fov)[0:200]
+        # sky_coord = twirl.gaia_radecs(header_data.sky_coord, fov)[0:200]
+        sky_coord = get_sources_gaia(header_data.sky_coord, fov)[0:200]
         sky_coord = twirl.geometry.sparsify(sky_coord, 0.1)
         sky_coord = sky_coord[:25]
     top_left_corner = (slice(None, img.shape[0] // 2), slice(None, img.shape[1] // 2), (0, 0))
@@ -156,3 +159,25 @@ def plate_solve_worker(img_indexes: list[int], header: Header, shm_params: Share
         stop_queue.put("ERROR")
         raise
     return res
+
+
+def get_sources_gaia(center: SkyCoord, fov, limit: int = 10000, mag_limit: float = 10) -> np.ndarray:
+    ra = center.ra.deg
+    dec = center.dec.deg
+    if fov.ndim == 1:
+        ra_fov, dec_fov = fov.to(u.deg).value
+    else:
+        ra_fov = dec_fov = fov.to(u.deg).value
+    radius = np.min([ra_fov, dec_fov]) / 2
+
+    fields = "ra, dec"
+    job = Gaia.launch_job(
+        f"select top {limit} {fields} from gaiadr2.gaia_source where "
+        "1=CONTAINS("
+        f"POINT('ICRS', {ra}, {dec}), "
+        f"CIRCLE('ICRS',ra, dec, {radius})) "
+        f"and phot_g_mean_mag < {mag_limit} "
+        "order by phot_g_mean_mag"
+    )
+    table = job.get_results()
+    return np.array([table["ra"].value.data, table["dec"].value.data]).T
