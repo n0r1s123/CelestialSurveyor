@@ -6,16 +6,16 @@ from PyInstaller.utils.hooks import copy_metadata
 
 datas = []
 datas += copy_metadata('xisf')
-datas += copy_metadata('twirl')
-datas += copy_metadata('astroquery')
-datas += copy_metadata('tensorflow')
+datas += [('/home/n0r1s/miniconda3/envs/CelestialSurveyor/lib/libssl.so.3', '.')]
+datas += [('/home/n0r1s/miniconda3/envs/CelestialSurveyor/lib/libcrypto.so.3', '.')]
+print(datas)
 
 a = Analysis(
     ['main.py'],
-    pathex=['/mnt/object_recognition'],
-    binaries=[('./model/model161.bin', './'), ('.\\backend\\astroquery\\CITATION', '.\\astroquery')],
+    pathex=['/home/n0r1s/git/CelestialSurveyor'],
+    binaries=[('./model/model161.bin', './lib-dynload/'), ('./backend/astroquery/CITATION', './astroquery')],
     datas=datas,
-    hiddenimports=['astroquery'],
+    hiddenimports=['astroquery', 'scipy._lib.array_api_compat.numpy.fft', 'scipy.special._special_ufuncs', 'ssl', 'urllib.request.http.client'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
