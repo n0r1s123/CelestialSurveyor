@@ -13,7 +13,7 @@ datas += copy_metadata('tensorflow')
 a = Analysis(
     ['main.py'],
     pathex=['C:\\git\\object_recognition\\'],
-    binaries=[('.\\model\\model161.bin', '.\\'), ('.\\backend\\astroquery\\CITATION', '.\\astroquery')],
+    binaries=[('.\\model\\model161.bin', '.\\lib-dynload\\'), ('.\\backend\\astroquery\\CITATION', '.\\astroquery')],
     datas=datas,
     hiddenimports=['astroquery'],
     hookspath=[],
