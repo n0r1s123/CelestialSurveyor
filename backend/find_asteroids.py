@@ -45,7 +45,7 @@ def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[Abstract
             asteroids.
     """
     logger.log.info("Finding moving objects...")
-    model_path = get_model_path() if model_path is None else model_path
+    model_path = get_model_path() if not model_path else model_path
     logger.log.info(f"Loading model: {model_path}")
     model = decrypt_model(model_path)
     batch_size = 10
@@ -54,7 +54,7 @@ def predict_asteroids(source_data: SourceDataV2, progress_bar: Optional[Abstract
     batch_generator = source_data.generate_batch(chunk_generator, batch_size=batch_size)
     ys, xs = source_data.get_number_of_chunks()
     progress_bar_len = len(ys) * len(xs)
-    progress_bar_len = progress_bar_len // batch_size + 1 if progress_bar_len % batch_size != 0 else 0
+    progress_bar_len = progress_bar_len // batch_size + (1 if progress_bar_len % batch_size != 0 else 0)
     if progress_bar:
         progress_bar.set_total(progress_bar_len)
     objects_coords = []

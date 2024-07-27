@@ -19,22 +19,23 @@ if __name__ == '__main__':
         description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '
                     'locating asteroids and comets within the vastness of the cosmic terrain')
 
-    arg_parser.add_argument('-c', '--cli_mode', dest='cli_mode', action="store_true",
+    arg_parser.add_argument('-c', '--cli_mode', dest='cli_mode', action="store_true", default="False",
                             help='Run app in command line mode')
-    arg_parser.add_argument('-s', '--source_folder', dest='source_folder', type=str, required=False,
+    arg_parser.add_argument('-s', '--source_folder', dest='source_folder', type=str, required=True,
                             help='Path to the folder with xisf or fit or fits files to be analyzed')
-    arg_parser.add_argument('-o', '--output_folder', dest='output_folder', type=str, required=False,
+    arg_parser.add_argument('-o', '--output_folder', dest='output_folder', type=str, required=True,
                             help='Path to the folder where results will be stored')
-    arg_parser.add_argument('--dark_folder', dest='dark_folder', type=str, required=False, default=None,
+    arg_parser.add_argument('--dark_folder', dest='dark_folder', type=str, required=False, default="",
                             help='Path to the folder with Dark frames (Optional)')
-    arg_parser.add_argument('--flat_folder', dest='flat_folder', type=str, required=False, default=None,
+    arg_parser.add_argument('--flat_folder', dest='flat_folder', type=str, required=False, default="",
                             help='Path to the folder with Flat frames (Optional). Work only if DarkFlat '
                                  'folder is provided')
     arg_parser.add_argument('--dark_flat_folder', dest='dark_flat_folder', type=str, required=False,
-                            default=None,
+                            default="",
                             help='Path to the folder with DarkFlat frames (Optional). Work only if DarkFlat '
                                  'folder is provided')
-    arg_parser.add_argument('-m', '--model_path', dest='model_path', type=str, default="default",
+    arg_parser.add_argument('-m', '--model_path', dest='model_path',
+                            type=str, default="",
                             required=False,
                             help='Path to the AI model file')
     arg_parser.add_argument('-n', '--non_linear', dest='non_linear', action="store_true", required=False,
@@ -45,7 +46,7 @@ if __name__ == '__main__':
                             default=False, help='Do image alignment when loading')
     arg_parser.add_argument('-v', '--version', dest='version', action="store_true", required=False,
                             help='Display version of this app.')
-    arg_parser.add_argument('-ml', '--magnitude_limit', dest='magnitude_limit', type=float, required=False,
+    arg_parser.add_argument('-l', '--magnitude_limit', dest='magnitude_limit', type=float, required=False,
                             default='18.0')
     provided_args = arg_parser.parse_args()
 
@@ -63,24 +64,20 @@ if __name__ == '__main__':
             except Exception as e:
                 logger.log.error(f"Unable to create output folder {provided_args.output_folder} due to {str(e)}")
                 sys.exit(0)
-        if provided_args.model_path != "default":
-            if not os.path.exists(provided_args.model_path):
-                logger.log.error(f"Provided model path {provided_args.model_path} does not exist")
-                sys.exit(0)
         if provided_args.magnitude_limit >= 25.0:
             logger.log.error(
                 f"Provided magnitude limit {provided_args.magnitude_limit} is too high. Maximum value is 25.0")
             sys.exit(0)
-        if provided_args.model_path != "default" and not os.path.exists(provided_args.model_path):
+        if provided_args.model_path and not os.path.exists(provided_args.model_path):
             logger.log.error(f"Provided model path {provided_args.model_path} does not exist")
             sys.exit(0)
-        if provided_args.flat_folder is not None and not os.path.exists(provided_args.flat_folder):
+        if provided_args.flat_folder and not os.path.exists(provided_args.flat_folder):
             logger.log.error(f"Provided flat folder {provided_args.flat_folder} does not exist")
             sys.exit(0)
-        if provided_args.dark_folder is not None and not os.path.exists(provided_args.dark_folder):
+        if provided_args.dark_folder and not os.path.exists(provided_args.dark_folder):
             logger.log.error(f"Provided dark folder {provided_args.dark_folder} does not exist")
             sys.exit(0)
-        if provided_args.dark_flat_folder is not None and not os.path.exists(provided_args.dark_flat_folder):
+        if provided_args.dark_flat_folder and not os.path.exists(provided_args.dark_flat_folder):
             logger.log.error(f"Provided dark flat folder {provided_args.dark_flat_folder} does not exist")
             sys.exit(0)
 
