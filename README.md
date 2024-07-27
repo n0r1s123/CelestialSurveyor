@@ -64,3 +64,18 @@ Examples of .gif files with the found known asteroid 934 Thuringia (A920 PA). gi
 ![6](https://github.com/user-attachments/assets/5656c148-792f-4d25-a365-4f33f198a748)
 ![7](https://github.com/user-attachments/assets/667425c4-c144-4748-872c-cad0f538af1b)
 
+
+**Builds**
+
+Windows: https://disk.yandex.ru/d/wa6m13K9VSpGKQ
+
+Ubuntu: https://disk.yandex.ru/d/9zY0pIoLgwE2aQ
+
+**Installation**
+
+- Download.
+- Unpack.
+- Should work from the box.
+
+**Clonning repository**
+git lfs is required to clone model files. 
