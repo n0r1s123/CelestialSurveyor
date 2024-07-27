@@ -1,5 +1,7 @@
-from multiprocessing import freeze_support
+
 if __name__ == '__main__':
+    from multiprocessing import freeze_support
+
     freeze_support()
     import argparse
     import os
@@ -19,11 +21,11 @@ if __name__ == '__main__':
         description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '
                     'locating asteroids and comets within the vastness of the cosmic terrain')
 
-    arg_parser.add_argument('-c', '--cli_mode', dest='cli_mode', action="store_true", default="False",
+    arg_parser.add_argument('-c', '--cli_mode', dest='cli_mode', action="store_true", default=False,
                             help='Run app in command line mode')
-    arg_parser.add_argument('-s', '--source_folder', dest='source_folder', type=str, required=True,
+    arg_parser.add_argument('-s', '--source_folder', dest='source_folder', type=str, required=False,
                             help='Path to the folder with xisf or fit or fits files to be analyzed')
-    arg_parser.add_argument('-o', '--output_folder', dest='output_folder', type=str, required=True,
+    arg_parser.add_argument('-o', '--output_folder', dest='output_folder', type=str, required=False,
                             help='Path to the folder where results will be stored')
     arg_parser.add_argument('--dark_folder', dest='dark_folder', type=str, required=False, default="",
                             help='Path to the folder with Dark frames (Optional)')
