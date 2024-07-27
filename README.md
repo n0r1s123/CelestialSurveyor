@@ -59,3 +59,8 @@ The second file contains annotations for the known object. Annotations are done 
 
 ![results_annotated](https://github.com/user-attachments/assets/00bf577b-c4e1-433c-a073-245e41b2121a)
 
+Examples of .gif files with the found known asteroid 934 Thuringia (A920 PA). gifs number 6 and 7: 
+
+![6](https://github.com/user-attachments/assets/5656c148-792f-4d25-a365-4f33f198a748)
+![7](https://github.com/user-attachments/assets/667425c4-c144-4748-872c-cad0f538af1b)
+
