@@ -15,7 +15,7 @@ if __name__ == '__main__':
 
     logger = get_logger()
 
-    version = "0.3.0"
+    version = "0.3.1"
     arg_parser = argparse.ArgumentParser(
         prog='CelestialSurveyor',
         description='It\'s is designed to analyze astronomical images with the primary goal of identifying and '
