@@ -1,8 +1,10 @@
 import astropy.io.fits
+import json
 import numpy as np
 import traceback
 
 from astropy.coordinates import SkyCoord
+import astropy.units as u
 from datetime import datetime
 from decimal import Decimal
 from functools import partial
@@ -213,23 +215,38 @@ def load_header_fits(filename: str) -> Header:
         timestamp = __get_datetime_from_str(header['DATE-OBS'])
 
         # Extract the right ascension (RA) from the header
-        ra = Decimal(header['RA'])
+        ra = header.get('RA') or header.get('OBJCTRA')
+        if not ra:
+            logger.log.info(f"Header:\n{json.dumps(header, indent=4)}")
+            raise ValueError("It's expected fits header to contain one of the following keywords: 'RA' or "
+                             "'OBJCTRA'. None of these was found.")
 
-        # Extract the declination (DEC) from the header
-        dec = Decimal(header['DEC'])
+        dec = header.get('DEC') or header.get('OBJCTDEC')
+        if not ra:
+            logger.log.info(f"Header:\n{json.dumps(header, indent=4)}")
+            raise ValueError("It's expected fits header to contain one of the following keywords: 'DEC' or "
+                             "'OBJCTDEC'. None of these was found.")
 
         # Extract the pixel scale from the header. If not present, calculate it from focal length and pixel size.
         pixel_scale = header.get('SCALE')
         if pixel_scale is not None:
-            pixel_scale = Decimal(pixel_scale)
+            pixel_scale = abs(Decimal(pixel_scale))
+        elif header.get('CDELT1'):
+            pixel_scale = u.Quantity(header.get('CDELT1'), unit=header.get('CUNIT1', 'deg'))
+            pixel_scale = abs(Decimal(pixel_scale.to(u.arcsec).value))
         else:
             focal_len = header.get('FOCALLEN')
             pixel_size = header.get('XPIXSZ')
             if focal_len is not None and pixel_size is not None:
                 focal_len = Decimal(focal_len)
                 pixel_size = Decimal(pixel_size)
-                pixel_scale = (pixel_size / focal_len) * Decimal(206.265)
+                if focal_len != 0 and pixel_size != 0:
+                    pixel_scale = (pixel_size / focal_len) * Decimal(206.265)
+                else:
+                    logger.log.info(f"Header:\n{header}")
+                    raise ValueError("Pixel scale information is not present in FITS header")
             else:
+                logger.log.info(f"Header:\n{header}")
                 raise ValueError("Pixel scale information is not present in FITS header")
         # Create a SolveData object with the extracted RA, DEC and pixel scale
         plate_solve_data = SolveData(SkyCoord(ra, dec, unit=["deg", "deg"]), pixel_scale)
