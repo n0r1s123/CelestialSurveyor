@@ -69,7 +69,7 @@ Examples of .gif files with the found known asteroid 934 Thuringia (A920 PA). gi
 
 Windows: https://disk.yandex.ru/d/jjohxMXZ6TT00g
 
-Ubuntu: https://disk.yandex.ru/d/9zY0pIoLgwE2aQ
+Ubuntu: https://disk.yandex.ru/d/oNW1DTtC5fDcuw
 
 **Installation**
 
