@@ -222,7 +222,7 @@ def load_header_fits(filename: str) -> Header:
                              "'OBJCTRA'. None of these was found.")
 
         dec = header.get('DEC') or header.get('OBJCTDEC') or header.get('OBJDEC')
-        if not ra:
+        if not dec:
             logger.log.info(f"Header:\n{json.dumps(header, indent=4)}")
             raise ValueError("It's expected fits header to contain one of the following keywords: 'DEC' or "
                              "'OBJCTDEC'. None of these was found.")
