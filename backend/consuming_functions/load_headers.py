@@ -215,13 +215,13 @@ def load_header_fits(filename: str) -> Header:
         timestamp = __get_datetime_from_str(header['DATE-OBS'])
 
         # Extract the right ascension (RA) from the header
-        ra = header.get('RA') or header.get('OBJCTRA')
+        ra = header.get('RA') or header.get('OBJCTRA') or header.get('OBJRA')
         if not ra:
             logger.log.info(f"Header:\n{json.dumps(header, indent=4)}")
             raise ValueError("It's expected fits header to contain one of the following keywords: 'RA' or "
                              "'OBJCTRA'. None of these was found.")
 
-        dec = header.get('DEC') or header.get('OBJCTDEC')
+        dec = header.get('DEC') or header.get('OBJCTDEC') or header.get('OBJDEC')
         if not ra:
             logger.log.info(f"Header:\n{json.dumps(header, indent=4)}")
             raise ValueError("It's expected fits header to contain one of the following keywords: 'DEC' or "
