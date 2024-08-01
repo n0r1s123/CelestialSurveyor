@@ -3,7 +3,7 @@ import json
 import numpy as np
 import traceback
 
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, EarthLocation
 import astropy.units as u
 from datetime import datetime
 from decimal import Decimal
@@ -15,7 +15,7 @@ from typing import Optional
 from xisf import XISF
 
 from backend.progress_bar import AbstractProgressBar
-from backend.data_classes import SolveData, SiteLocation, Header
+from backend.data_classes import SolveData, Header
 from logger.logger import get_logger
 from backend.consuming_functions.measure_execution_time import measure_execution_time
 
@@ -182,12 +182,12 @@ def load_header_xisf(filename: str) -> Header:
         ra, dec, unit=["deg", "deg"]), pixel_scale) if ra and dec and pixel_scale else None
     # Extract the latitude from the FITS header, default to 0 if not present
     lat = img_meta["FITSKeywords"].get("SITELAT")
-    lat = Decimal(lat[0]['value'] if lat is not None else 0)
+    lat = lat[0]['value'] if lat is not None else 0
     # Extract the longitude from the FITS header, default to 0 if not present
     long = img_meta["FITSKeywords"].get("SITELONG")
-    long = Decimal(long[0]['value'] if long is not None else 0)
+    long = long[0]['value'] if long is not None else 0
     # Create SiteLocation object with the extracted latitude and longitude
-    site_location = SiteLocation(lat=lat, long=long)
+    site_location = EarthLocation.from_geodetic(lat=lat, lon=long)
     # Create Header object with the extracted information
     header = Header(filename, exposure, timestamp, site_location, plate_solve_data)
     return header
@@ -252,14 +252,25 @@ def load_header_fits(filename: str) -> Header:
         plate_solve_data = SolveData(SkyCoord(ra, dec, unit=["deg", "deg"]), pixel_scale)
 
         # Extract the latitude and longitude from the header
-        lat = Decimal(header.get("SITELAT", 0))
-        long = Decimal(header.get("SITELONG", 0))
+        lat = header.get("SITELAT", 0)
+        long = header.get("SITELONG", 0)
 
         # Create a SiteLocation object with the extracted latitude and longitude
-        site_location = SiteLocation(lat=lat, long=long)
+        site_location = EarthLocation.from_geodetic(lat=lat, lon=long)
 
         # Create a Header object with the extracted information
         header = Header(filename, exposure, timestamp,  site_location, plate_solve_data)
 
         # Return the Header object
         return header
+
+
+if __name__ == '__main__':
+    a = EarthLocation.from_geodetic(
+        lat='-44 01 01',
+        lon='-52.67',
+        height=0,
+    )
+    print(a.geodetic.lat.to_value())
+    print(a.geodetic.lon.to_value())
+

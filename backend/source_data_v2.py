@@ -801,8 +801,8 @@ class SourceDataV2:
         for sb_kind in ('a', 'c'):
             params = {
                 "sb-kind": sb_kind,
-                "lat": round(self.headers[img_idx].site_location.lat, 3),
-                "lon": round(self.headers[img_idx].site_location.long, 4),
+                "lat": round(self.headers[img_idx].site_location.geodetic.lat.to_value(), 3),
+                "lon": round(self.headers[img_idx].site_location.geodetic.lon.to_value(), 4),
                 "alt": 0,
                 "obs-time": obs_time,
                 "mag-required": True,
