@@ -1,6 +1,6 @@
 import numpy as np
 
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, EarthLocation
 from astropy.wcs import WCS
 from dataclasses import dataclass
 from datetime import datetime
@@ -37,34 +37,6 @@ class SolveData:
 
 
 @dataclass
-class SiteLocation:
-    """
-    Class to represent a site's geographical location.
-
-    Attributes:
-        lat (Decimal): The latitude of the site in decimal degrees.
-        long (Decimal): The longitude of the site in decimal degrees.
-    """
-    lat: Decimal
-    long: Decimal
-
-    def __post_init__(self):
-        """
-        Ensure the lat and long are of Decimal type.
-        """
-        if not isinstance(self.lat, Decimal):
-            raise TypeError("Latitude must be a Decimal object.")
-        if not isinstance(self.long, Decimal):
-            raise TypeError("Longitude must be a Decimal object.")
-
-    def __repr__(self):
-        return f"SiteLocation(lat={self.lat}, long={self.long})"
-
-    def __str__(self):
-        return f"SiteLocation: Latitude: {self.lat}, Longitude: {self.long}"
-
-
-@dataclass
 class Header:
     """
     Class to represent the header information of an image.
@@ -73,14 +45,14 @@ class Header:
         file_name (str): The name of the image file.
         exposure (Decimal): The exposure time of the image.
         timestamp (datetime): The timestamp of the image.
-        site_location (SiteLocation): The geographical location of the site.
+        site_location (EarthLocation): The geographical location of the site.
         solve_data (SolveData) [Optional]: The data required for plate solving of the image.
         wcs (WCS) [Optional]: WCS data - plate solve result.
     """
     file_name: str
     exposure: Decimal
     timestamp: datetime
-    site_location: SiteLocation
+    site_location: EarthLocation
     solve_data: Optional[SolveData] = None
     wcs: Optional[WCS] = None
 
@@ -100,8 +72,8 @@ class Header:
         if not isinstance(self.exposure, Decimal):
             raise TypeError("Exposure must be a Decimal object.")
 
-        if not isinstance(self.site_location, SiteLocation):
-            raise TypeError("Site location must be a SiteLocation object.")
+        if not isinstance(self.site_location, EarthLocation):
+            raise TypeError("Site location must be a EarthLocation object.")
 
         if not isinstance(self.solve_data, SolveData) and self.solve_data is not None:
             raise TypeError("Solve data must be a SolveData object or None.")
