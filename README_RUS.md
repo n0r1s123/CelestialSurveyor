@@ -70,9 +70,9 @@ CelestialSurveyor предназначен для анализа астроно�
 
 **Билды:**
 
-Windows: https://disk.yandex.ru/d/UN6BzhTVCbkfDA
+Windows: https://disk.yandex.ru/d/JbMPfK28qym4Gg
 
-Ubuntu: https://disk.yandex.ru/d/_9tUR1nmmqZctg
+Ubuntu: https://disk.yandex.ru/d/obnr4CuqRXITug
 
 **Установка**
 
