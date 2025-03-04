@@ -42,10 +42,17 @@ def plate_solve_image(image: np.ndarray, header: Header,
     shape = img.shape
     fov = np.min(shape[:2]) * pixel.to(u.deg)
     if sky_coord is None:
-        # sky_coord = twirl.gaia_radecs(header_data.sky_coord, fov)[0:200]
-        sky_coord = get_sources_from_gaia(header_data.sky_coord, fov)[0:200]
-        sky_coord = twirl.geometry.sparsify(sky_coord, 0.1)
-        sky_coord = sky_coord[:25]
+        for mag_limit in range(10, 20, 2):
+            sky_coord = get_sources_from_gaia(header_data.sky_coord, fov, mag_limit=mag_limit)
+            sky_coord = twirl.geometry.sparsify(sky_coord, 0.05)
+            sky_coord = sky_coord[:25]
+            if len(sky_coord) > 15:
+                break
+            logger.log.info(f"Could not get enough sources from GAIA. Trying with magnitude limit +{mag_limit}")
+        else:
+            logger.log.error(f"Could not get enough sources from GAIA. Got {len(sky_coord)} sources.")
+            raise Exception(f"Could not get enough sources from GAIA. Got {len(sky_coord)} sources.")
+
     top_left_corner = (slice(None, img.shape[0] // 2), slice(None, img.shape[1] // 2), (0, 0))
     bottom_left_corner = (slice(img.shape[0] // 2, None), slice(None, img.shape[1] // 2), (img.shape[0]//2, 0))
     top_right_corner = (slice(None, img.shape[0] // 2), slice(img.shape[1] // 2, None), (0, img.shape[1]//2))
@@ -54,14 +61,14 @@ def plate_solve_image(image: np.ndarray, header: Header,
     corners = [top_left_corner, bottom_left_corner, top_right_corner, bottom_right_corner]
     all_corner_peaks = []
     for y_slice, x_slice, (y_offset, x_offset) in corners:
-        peak_cos = twirl.find_peaks(img[y_slice, x_slice], threshold=1)[0:200]
+        peak_cos = twirl.find_peaks(img[y_slice, x_slice], threshold=2)[0:200]
         corner_peaks = []
         for x, y in peak_cos:
             y += y_offset
             x += x_offset
             dist_from_center_x = x - shape[1] // 2
             dist_from_center_y = y - shape[0] // 2
-            if np.sqrt(dist_from_center_x**2 + dist_from_center_y**2) < min(shape) // 2:
+            if np.sqrt(dist_from_center_x**2 + dist_from_center_y**2) > min(shape) // 10:
                 corner_peaks.append([x, y])
         all_corner_peaks.extend(corner_peaks[:8])
     all_corner_peaks = np.array(all_corner_peaks)
@@ -162,16 +169,17 @@ def plate_solve_worker(img_indexes: list[int], header: Header, shm_params: Share
 
 
 @measure_execution_time
-def get_sources_from_gaia(center: SkyCoord, fov, limit: int = 10000, mag_limit: float = 10) -> np.ndarray:
+def get_sources_from_gaia(center: SkyCoord, fov, limit: int = 10000, mag_limit: int = 10) -> np.ndarray:
     ra = center.ra.deg
     dec = center.dec.deg
+    logger.log.info(f"FOV radius: {fov:.2f} deg")
     if fov.ndim == 1:
         ra_fov, dec_fov = fov.to(u.deg).value
     else:
         ra_fov = dec_fov = fov.to(u.deg).value
     radius = np.min([ra_fov, dec_fov]) / 2
-
     fields = "ra, dec"
+    logger.log.info(f"Getting star sources from online Gaia catalog. Using magnitude limit +{mag_limit}.")
     job = Gaia.launch_job(
         f"select top {limit} {fields} from gaiadr2.gaia_source where "
         "1=CONTAINS("
@@ -181,4 +189,5 @@ def get_sources_from_gaia(center: SkyCoord, fov, limit: int = 10000, mag_limit: 
         "order by phot_g_mean_mag"
     )
     table = job.get_results()
-    return np.array([table["ra"].value.data, table["dec"].value.data]).T
+    res = np.array([table["ra"].value.data, table["dec"].value.data]).T
+    return res

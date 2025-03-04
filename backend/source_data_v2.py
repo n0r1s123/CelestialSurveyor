@@ -798,7 +798,7 @@ class SourceDataV2:
         fov_dec_lim = f"{self.convert_dec(dec_min)},{self.convert_dec(dec_max)}"
         know_asteroids = []
         know_comets = []
-        for sb_kind in ('a', 'c'):
+        for suppress_first_pass, sb_kind in (('a', True), ('c', False)):
             params = {
                 "sb-kind": sb_kind,
                 "lat": round(self.headers[img_idx].site_location.geodetic.lat.to_value(), 3),
@@ -807,7 +807,7 @@ class SourceDataV2:
                 "obs-time": obs_time,
                 "mag-required": True,
                 "two-pass": True,
-                "suppress-first-pass": True,
+                "suppress-first-pass": suppress_first_pass,
                 "req-elem": False,
                 "vmag-lim": magnitude_limit,
                 "fov-ra-lim": fov_ra_lim,
